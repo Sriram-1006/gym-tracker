@@ -1,0 +1,264 @@
+================================================================================
+SESSION LOG — Gym Tracker app
+Created: 2026-09-13
+Purpose: handoff notes so a future AI session (or dev) understands the project
+structure and exactly what was done/changed in this session.
+================================================================================
+
+1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+Offline-first gym tracker built with React Native (Expo SDK 54) + TypeScript.
+Two tabs (Workout | Diet) via React Navigation bottom tabs; Add Workout and
+Workout Detail are native-stack screens. All data persists locally through
+AsyncStorage behind a repository layer (swappable for a real backend later).
+
+Layer rules (keep them!):
+  - screens/       UI only; never touch storage.
+  - stores/        Zustand stores = the ONLY state screens talk to.
+  - data/          Framework-agnostic: models.ts, repositories.ts,
+                   exerciseLibrary.ts, services/storageService.ts.
+  - theme/         Light/dark palettes (theme.ts), ThemeContext,
+                   persisted themeStore (zustand).
+  - components/    Shared UI kit (ui.tsx: Button, Card, SectionTitle,
+                   ProgressBar, Field, ModalSheet, EmptyState, Stepper,
+                   Segmented) + StrengthChart (Victory Native + Skia).
+  - navigation/    index.tsx — tabs + stack, themed via NavigationContainer.
+  - App.tsx        Hydration gate: hydrates theme/workout/diet stores before
+                   rendering the navigator.
+
+Key data concepts:
+  - WorkoutSession { id, date (ISO YYYY-MM-DD), restDay, bodyParts[], createdAt }
+  - Strength score = SUM(weight x reps) over all sets of a day
+    (computeSessionStrength / computeStrengthSeries in data/repositories.ts).
+  - Streak = consecutive workout days; marked rest days are NEUTRAL (bridge the
+    chain, add nothing); a day with neither workout nor rest mark breaks it
+    (computeStreak, same file). Behavior is pinned by tests/analytics.test.ts —
+    do not change streak semantics without updating those tests.
+  - Analytics are DERIVED from `sessions` on every render (useMemo) — there is
+    no cached streak/score counter to decrement anywhere.
+
+Commands:
+  npm run typecheck   (tsc --noEmit)
+  npm test            (vitest run — tests/analytics, tests/stores, tests/theme)
+  npx expo start      (dev server; web via --web)
+
+2. WORK DONE THIS SESSION (7 requested items, all completed)
+--------------------------------------------------------------------------------
+[1] FIX — "Add set" carried over old set data
+    screens/AddWorkoutScreen.tsx
+    - addSet() now always appends a BLANK set ({ weight: '', reps: '' }).
+    - New explicit duplicateLastSet() copies the last set's values into a new
+      one ONLY on user action.
+    - UI: two buttons per exercise — "Add set" and "Duplicate last set"
+      (both ghost, size sm).
+
+[2] FEATURE — Delete workout
+    stores/appStores.ts
+    - New action deleteSession(sessionId): filters the session out, persists
+      via workoutRepository.saveAll. Graph + streak recompute automatically on
+      next render (derived state — nothing else needed).
+    screens/WorkoutHomeScreen.tsx
+    - Each "Previous workouts" row is now a flex row: a 64-wide trash-icon
+      delete zone (Ionicons "trash-outline") + the tappable row content.
+      Delete asks Alert.confirm "Delete workout?" / "This can't be undone."
+      then deletes. (Note: it is a always-visible trash button, NOT a
+      swipe gesture — swipe-to-delete needs a gesture lib we don't use.)
+    screens/WorkoutDetailScreen.tsx
+    - Trash icon in the header (right slot) with the same confirm dialog;
+      navigates back after deleting.
+
+[3] POLISH — Scoring formula removed from main UI
+    components/StrengthChart.tsx
+    - Empty state is now ONE friendly line: "No workouts yet — your strength
+      curve will appear here." Formula text removed.
+    screens/WorkoutHomeScreen.tsx
+    - Optional info path implemented: an (i) icon (Ionicons
+      "information-circle-outline") next to the "Strength" heading opens a
+      ModalSheet titled "Strength score" with a friendly explanation.
+
+[4] POLISH — Emoji replaced with Ionicons (@expo/vector-icons)
+    package.json
+    - Added dependency "@expo/vector-icons": "15.1.1" (exact pin; it was
+      already nested under expo/node_modules but not directly declared).
+    - User explicitly approved the npm install.
+    Replacements:
+      - Tab icons: barbell-outline / nutrition-outline (navigation/index.tsx)
+      - Streak: flame (WorkoutHomeScreen)
+      - Theme toggle: sunny (in dark mode) / moon (in light mode) — shows the
+        mode you'd switch TO
+      - Rest-day rows / detail title: moon / barbell small icons
+      - Set remove: close (was text ✕) — AddWorkoutScreen
+      - Diet log input: close for cancel (was ✕ button), add for the macro
+        "+" button — DietScreen
+      - Stepper +/−: add / remove icons — components/ui.tsx
+    Verified: no emoji left in screens/, components/, navigation/, App.tsx.
+
+[5] POLISH — "Mark rest day" clarified
+    screens/WorkoutHomeScreen.tsx
+    - Button relabeled: "Mark today as rest day" (or "Unmark today as rest"
+      when today is already marked).
+    - Pressing it opens a confirm dialog ("Mark today as a rest day?");
+      un-marking does NOT ask.
+    - Guards: if a workout was already logged today → Alert "Cannot mark rest
+      day / You already logged a workout today..."; toggleRestDay itself is
+      idempotent so double-marking the same day is impossible.
+
+[6] POLISH — Empty strength graph dead space
+    components/StrengthChart.tsx
+    - Empty state container no longer reserves the graph height: it renders a
+      compact centered box (paddingVertical 20, auto height). The `height`
+      prop is only used once there is >= 1 data point (single-point message
+      keeps full height to avoid layout jump).
+
+[7] VERIFY — Light theme contrast
+    theme/theme.ts (light palette only; dark untouched)
+    - textMuted #6b7280 -> #4b5563 (gray-600): clears WCAG AA (>= 4.5:1) on
+      white/light surfaces; gray-500 did not.
+    - destructive #dc2626 -> #b91c1c (red-700): white label on destructive
+      buttons now clears AA.
+    - Checked screens: WorkoutHome (incl. delete zone, ghost buttons),
+      AddWorkout, Diet (incl. Edit-targets form), Detail. progressTrack /
+      accent / borders already OK. Verification was manual reasoning over the
+      palette, not a screenshot tool — noted in README Known Issues.
+
+README.md
+    - Title emoji dropped; docs updated for delete flow, rest-day wording,
+      duplicate-set behavior, in-app formula explainer, Ionicons icon set.
+    - New "Changelog" section with 1.0.1 entry + "Known issues" (no automated
+      theme screenshot checks yet).
+
+tests/stores.test.ts
+    - 3 new tests: deleteSession removes only the target & persists;
+      deleting today's session makes streak 0 (recomputed, not decremented);
+      deleting a rest-day marker works. 38 tests total, all green.
+
+log.txt
+    - This file (session handoff).
+
+3. ACCIDENT & RECOVERY (worth knowing for future sessions)
+--------------------------------------------------------------------------------
+The write_file tool once dropped the "/" from every JSX closing tag written
+in one call (e.g. "</Text>" became "Text>"). It was caught immediately by
+grepping for lines matching /^[A-Za-z]+>\s*$/ and fixed by rewriting
+WorkoutHomeScreen.tsx. If you ever see weird bare "Text>" / "View>" lines in
+a file, suspect this and re-verify the whole file.
+
+4. VERIFICATION STATUS AT END OF SESSION
+--------------------------------------------------------------------------------
+- npx tsc --noEmit: clean.
+- npm test: 3 files / 38 tests passed (12 store tests incl. the new delete
+  ones, 22 analytics, 4 theme).
+- Grep sweep: no emoji glyphs left in UI code; formula text gone from UI;
+  rest-day button has "today" wording.
+- NOT done: on-device/visual smoke test in Expo Go; Jest/RN component tests
+  (project has none); committing changes (user did not request).
+
+5. IDEAS / NEXT STEPS (not requested, flagged for future)
+--------------------------------------------------------------------------------
+- Swipe-to-delete (react-native-gesture-handler + Reanimated) if the always-
+  visible trash button is deemed too prominent.
+- component tests via @testing-library/react-native for the new confirm
+  dialogs.
+- Health-check script for theme contrast (small script computing WCAG ratios
+  from theme.ts would prevent regressions).
+- log.txt is untracked documentation; decide whether to commit it or gitignore.
+================================================================================
+SESSION 2 LOG — 2026-09-13 (delete-fix + verification pass)
+================================================================================
+
+1. BUG FIX — "Delete workout button does nothing" (user report)
+--------------------------------------------------------------------------------
+ROOT CAUSE (confirmed by reading node_modules/react-native-web/dist/exports/
+Alert/index.js): react-native-web implements Alert as a literal no-op:
+
+    class Alert { static alert() {} }
+
+The trash buttons DID have onPress handlers and the store's deleteSession DID
+persist correctly — but on web, Alert.alert() never renders a dialog and its
+button callbacks (which contained the deleteSession call) never fire. So the
+tap appeared completely dead on web. (It would have worked on native.)
+
+FIX:
+- components/ui.tsx: new <ConfirmDialog> — themed in-app Modal with
+  cancel/confirm buttons, `destructive` variant, cancelLabel='' hides cancel
+  for OK-only dialogs. Replaces Alert.alert everywhere.
+- components/Toast.tsx (NEW): module-level showToast() + <ToastHost /> mounted
+  in App.tsx inside SafeAreaProvider. Fixed bottom placement (above the tab
+  bar, insets.bottom + 88). Used for: "Workout deleted", "Today marked as
+  rest", "Rest day unmarked", "Workout saved" (also replaced the old
+  Alert in AddWorkoutScreen save-failure path).
+- screens/WorkoutHomeScreen.tsx + WorkoutDetailScreen.tsx: swapped Alert for
+  ConfirmDialog state machines; delete confirms then calls deleteSession and
+  toasts. Detail screen navigates back after delete (list is already current).
+
+Delete flow is now: tap trash -> ConfirmDialog ("Delete this workout? / This
+can't be undone") -> confirm -> deleteSession -> AsyncStorage write ->
+toast. List/graph/streak update immediately (derived state).
+
+2. HARDENING — rest-day rules pushed into the store
+--------------------------------------------------------------------------------
+stores/appStores.ts: toggleRestDay no longer silently toggles. It now returns
+Promise<string | null> (error message or null) and REJECTS:
+- marking a day already marked as rest ('Today is already marked as a rest
+  day.') — prevents duplicate markers;
+- marking a day with a logged workout ('You already logged a workout today.
+  A day cannot be both.').
+UI: unmark path now deletes the marker session directly (deleteSession),
+which cannot collide with the guards. Store-level rejection is surfaced via
+toast if it ever fires.
+
+3. TESTS (tests/stores.test.ts — 12 -> 15 tests)
+--------------------------------------------------------------------------------
+New/changed:
+- toggleRestDay rejects already-marked day (no duplicate created)
+- toggleRestDay rejects day with logged workout (no rest marker created)
+- deleteSession persists removal across a hydrate() reload (app-restart sim)
+- deleteSession keeps other days intact across reload
+Total suite: 41 tests, all green. tsc --noEmit clean.
+
+4. VERIFICATION of earlier fixes (this session, static + bundle-level)
+--------------------------------------------------------------------------------
+- Add set starts blank: AddWorkoutScreen lines 126/146 ({weight:'',reps:''});
+  duplicateLastSet is opt-in only (lines 151/368).
+- Multi-exercise + multi-body-part single-session save: commitBodyPart()
+  accumulates into draft (line 94), saveSession commits pending form + draft
+  as ONE addSession call (lines 102-107).
+- Real workout -> list + graph + streak: unchanged derivations
+  (computeStrengthSeries / computeStreak) confirmed via tests.
+- Served web bundle greps: 'Mark today as rest day', 'deleteSession' x7,
+  'Workout deleted', 'Delete this workout?', 'already marked as a rest day'
+  all present in freshly built bundle -> dev server is running NEW code.
+- Mobile layout (code-level, 390x844 reference): @react-navigation/
+  bottom-tabs v7 BottomTabBar adds insets.bottom to the tab bar itself
+  (verified in node_modules source, line ~252) -> home-indicator safe.
+  Touch targets: deleteZone 64px wide rows minHeight 44, diet + button 44px,
+  rest-day Button 44px (theme.touchTarget). All >= 44px.
+
+5. DEV SERVER (note for future sessions)
+--------------------------------------------------------------------------------
+- Port 8081 was held by a STALE server started before @expo/vector-icons was
+  installed; it served a broken 500 bundle (couldn't resolve Zocial.ttf) and
+  its Metro file graph didn't know the new package. Killed it (taskkill
+  //F //PID 5112). Restarted with:
+
+      nohup npx expo start --web > expo-dev.log 2>&1 &
+
+- Fresh bundle: 200, 1932 modules, ~9MB dev bundle, no errors. If the app
+  looks stale or 500s on the bundle, suspect a stale Metro cache/server and
+  restart with: npx expo start --web --clear.
+- Note: run_terminal_command BACKGROUND is not available in this environment;
+  use the nohup ... & pattern instead.
+
+6. README
+--------------------------------------------------------------------------------
+- Added Changelog 1.0.2 entry (delete-fix root cause + fix, toasts, store
+  guards, verification results, mobile layout check).
+- Known issues updated: no automated E2E UI test yet; layout check was
+  code-inspection at 390x844, physical-device pass still recommended.
+
+NOT DONE / NEXT:
+- No physical-device (Expo Go) or real emulator visual pass yet.
+- Git: repo still has no .git (user chose to defer commits).
+================================================================================
+END OF SESSION LOG
+================================================================================
