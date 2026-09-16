@@ -194,7 +194,6 @@ export function DietScreen() {
         {logOpenFor === m.key ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.s, marginTop: spacing.s }}>
             <TextInput
-              autoFocus
               value={logValue}
               onChangeText={setLogValue}
               keyboardType="decimal-pad"

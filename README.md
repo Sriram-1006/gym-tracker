@@ -176,3 +176,7 @@ React Native (Expo SDK 54) · TypeScript · React Navigation (bottom tabs + nati
 - Delete/confirm flows are covered by store-level unit tests and code-level verification; an automated end-to-end UI test (e.g. Detox/Maestro) does not exist yet.
 - Light/dark rendering was verified manually on the Workout, Add Workout, Diet and Edit-diet-targets screens; a automated screenshot-diff check for both themes does not exist yet.
 - The mobile-layout check was done by code inspection against a 390 × 844 viewport (safe-area handling and touch-target sizes); a pass on a physical device via Expo Go is still recommended.
+
+### 1.0.3 — Stray text-cursor bug fix
+
+- **Fixed: stray text cursor appearing outside input fields.** Root cause: the inline log `TextInput` in `DietScreen.tsx` had `autoFocus` prop, which caused the input to receive focus in React Native Web's browser preview, making a cursor appear when tapping near text on any screen. The `autoFocus` prop has been removed. Only genuine input fields (weight/reps entry, body-part custom text, diet target numbers) now show a cursor.
