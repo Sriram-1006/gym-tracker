@@ -129,7 +129,8 @@ export function WorkoutHomeScreen({ navigation }: any) {
 
       <Pressable
         accessibilityRole="button"
-        onPress={() => navigation.navigate('WorkoutDetail', { sessionId: item.id })}
+        accessibilityLabel={`Edit workout from ${item.date}`}
+        onPress={() => navigation.navigate('EditWorkout', { sessionId: item.id })}
         style={styles.rowMain}
       >
         <View style={styles.rowTitleLine}>

@@ -38,6 +38,7 @@ interface WorkoutState {
    */
   toggleRestDay: (dateISO: string) => Promise<string | null>;
   deleteSession: (sessionId: string) => Promise<void>;
+  updateSession: (sessionId: string, updates: Partial<WorkoutSession>) => Promise<void>;
 }
 
 export interface BodyPartInput {
@@ -141,6 +142,18 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => ({
    */
   deleteSession: async (sessionId: string) => {
     const sessions = get().sessions.filter((s) => s.id !== sessionId);
+    set({ sessions });
+    await workoutRepository.saveAll(sessions);
+  },
+
+  /**
+   * Update an existing workout session by ID.
+   * Keeps the same workout ID and only modifies the provided fields.
+   */
+  updateSession: async (sessionId: string, updates: Partial<WorkoutSession>) => {
+    const sessions = get().sessions.map((s) =>
+      s.id === sessionId ? { ...s, ...updates } : s,
+    );
     set({ sessions });
     await workoutRepository.saveAll(sessions);
   },

@@ -9,11 +9,13 @@ import { WorkoutHomeScreen } from '../screens/WorkoutHomeScreen';
 import { DietScreen } from '../screens/DietScreen';
 import { AddWorkoutScreen } from '../screens/AddWorkoutScreen';
 import { WorkoutDetailScreen } from '../screens/WorkoutDetailScreen';
+import { EditWorkoutScreen } from '../screens/EditWorkoutScreen';
 
 export type RootStackParamList = {
   WorkoutTabs: undefined;
   AddWorkout: undefined;
   WorkoutDetail: { sessionId: string };
+  EditWorkout: { sessionId: string };
 };
 
 export type RootTabParamList = {
@@ -83,6 +85,11 @@ export function RootNavigator() {
         <Stack.Screen
           name="WorkoutDetail"
           component={WorkoutDetailScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+      <Stack.Screen
+          name="EditWorkout"
+          component={EditWorkoutScreen}
           options={{ animation: 'slide_from_right' }}
         />
       </Stack.Navigator>

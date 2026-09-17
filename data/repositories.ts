@@ -50,6 +50,17 @@ export const workoutRepository = {
   async saveAll(sessions: WorkoutSession[]): Promise<void> {
     await storageService.setItem(WORKOUTS_KEY, sessions);
   },
+
+  async updateSession(
+    sessionId: string,
+    updated: Partial<WorkoutSession>,
+  ): Promise<void> {
+    const sessions = await this.getAll();
+    const idx = sessions.findIndex((s) => s.id === sessionId);
+    if (idx === -1) throw new Error('Session not found');
+    sessions[idx] = { ...sessions[idx], ...updated } as WorkoutSession;
+    await storageService.setItem(WORKOUTS_KEY, sessions);
+  },
 };
 
 /* ---------------------------- diet repo ------------------------------ */

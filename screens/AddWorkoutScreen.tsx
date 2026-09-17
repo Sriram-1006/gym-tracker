@@ -7,11 +7,14 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkoutStore, BodyPartInput } from '../stores/appStores';
+import { todayISO } from '../data/repositories';
 import { Button, Card, SectionTitle } from '../components/ui';
 import { showToast } from '../components/Toast';
 import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
@@ -37,6 +40,7 @@ export function AddWorkoutScreen({ navigation }: any) {
 
   const [draft, setDraft] = useState<BodyPartInput[]>([]);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Current in-progress body part
   const [bodyPart, setBodyPart] = useState<string | null>(null);
@@ -48,7 +52,9 @@ export function AddWorkoutScreen({ navigation }: any) {
   const [exName, setExName] = useState('');
   const [exPickerOpen, setExPickerOpen] = useState(false);
 
-  const [error, setError] = useState<string | null>(null);
+  // Workout date — defaults to current date if not explicitly changed
+  const [date, setDate] = useState<string>(() => todayISO());
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
 
   const presetSetsFor = useMemo(
     () => (part: string) => EXERCISE_LIBRARY[part] ?? [],
@@ -64,6 +70,7 @@ export function AddWorkoutScreen({ navigation }: any) {
     setBodyPart(null);
     setCustomPart('');
     resetExerciseForm();
+    setPartPickerOpen(true);
   };
 
   /** Validates and moves the in-progress body part into the draft.
@@ -91,7 +98,13 @@ export function AddWorkoutScreen({ navigation }: any) {
       return null;
     }
     const entry: BodyPartInput = { bodyPart: part, exercises: cleaned };
-    setDraft((d) => [...d, entry]);
+    setDraft((d) => {
+      const idx = d.findIndex((bp) => bp.bodyPart === part);
+      if (idx >= 0) {
+        return [...d.slice(0, idx), entry, ...d.slice(idx + 1)];
+      }
+      return [...d, entry];
+    });
     setError(null);
     startNewBodyPart();
     return entry;
@@ -108,7 +121,7 @@ export function AddWorkoutScreen({ navigation }: any) {
     }
     setSaving(true);
     try {
-      await addSession({ bodyParts: finalDraft });
+      await addSession({ bodyParts: finalDraft, dateISO: date });
       showToast('Workout saved');
       navigation.popToTop();
     } catch (e) {
@@ -143,24 +156,15 @@ export function AddWorkoutScreen({ navigation }: any) {
    */
   const addSet = (exIdx: number) => {
     setExercises((xs) =>
-      xs.map((x, i) => (i === exIdx ? { ...x, sets: [...x.sets, { weight: '', reps: '' }] } : x)),
-    );
-  };
-
-  /** Opt-in convenience: copy the last set's weight/reps into a new set. */
-  const duplicateLastSet = (exIdx: number) => {
-    setExercises((xs) =>
-      xs.map((x, i) => {
-        if (i !== exIdx || x.sets.length === 0) return x;
-        const last = x.sets[x.sets.length - 1];
-        return { ...x, sets: [...x.sets, { ...last }] };
-      }),
+      xs.map((x, i) =>
+        i === exIdx ? { ...x, sets: [...x.sets, { weight: '', reps: '' }] } : x),
     );
   };
 
   const removeSet = (exIdx: number, setIdx: number) => {
     setExercises((xs) =>
-      xs.map((x, i) => (i === exIdx ? { ...x, sets: x.sets.filter((_, j) => j !== setIdx) } : x)),
+      xs.map((x, i) =>
+        i === exIdx ? { ...x, sets: x.sets.filter((_, j) => j !== setIdx) } : x),
     );
   };
 
@@ -171,11 +175,11 @@ export function AddWorkoutScreen({ navigation }: any) {
   /* ------------------------------- rendering ----------------------------- */
 
   const renderDraftSummary = () => {
-    if (draft.length === 0) return null;
+    if (draft.length === 0 && exercises.length === 0) return null;
     const totalSets = draft.reduce(
-      (a, bp) => a + bp.exercises.reduce((x, e) => x + e.sets.length, 0),
+      (a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0),
       0,
-    );
+    ) + exercises.reduce((a, e) => a + e.sets.length, 0);
     return (
       <Card style={{ marginBottom: spacing.m }}>
         <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
@@ -193,12 +197,67 @@ export function AddWorkoutScreen({ navigation }: any) {
             ))}
           </View>
         ))}
+        {exercises.length > 0 ? (
+          <View>
+            {exercises.map((e, i) => (
+              <View
+                key={`${e.name}-${i}`}
+                style={{ marginTop: spacing.s, paddingTop: spacing.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.caption }}>
+                  {e.name}
+                </Text>
+                {e.sets.map((s, j) => (
+                  <Text key={j} style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
+                    • Set {j + 1}: {s.weight}kg×{s.reps}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        ) : null}
         <Text style={{ color: colors.textMuted, fontSize: fontSize.caption, marginTop: spacing.s }}>
           {totalSets} set{totalSets === 1 ? '' : 's'} total
         </Text>
       </Card>
     );
   };
+
+  /* Date selection handlers */
+
+  const showDatePicker = () => {
+    setDatePickerVisible(true);
+  };
+
+  const onDateConfirm = (selectedDate: string) => {
+    setDate(selectedDate);
+    setDatePickerVisible(false);
+  };
+
+  const onDateChange = (_event: any, selectedDate?: Date) => {
+    if (selectedDate) {
+      setDate(todayISO(selectedDate));
+    }
+    setDatePickerVisible(false);
+  };
+
+  const renderDatePicker = () => {
+    if (!datePickerVisible) return null;
+    return (
+      <DateTimePicker
+        value={new Date(date)}
+        mode="date"
+        is24Hour={true}
+        display="default"
+        onChange={onDateChange}
+        minimumDate={new Date(2020, 0, 1)}
+        maximumDate={new Date()}
+      />
+    );
+  };
+
+  /** Whether we're in "Screen 1" (initial selection) vs "Screen 2+" (exercise entry) */
+  const isInitialScreen = exercises.length === 0 && draft.length === 0;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -226,171 +285,317 @@ export function AddWorkoutScreen({ navigation }: any) {
         <View style={{ width: 44 }} />
       </View>
 
+      {/* Read-only header when in exercise entry mode (Screen 2+) */}
+      {!isInitialScreen && (
+        <View style={{ paddingHorizontal: spacing.m, paddingTop: spacing.m, paddingBottom: spacing.s }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: spacing.s }}>
+            {/* Body parts breadcrumb */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flex: 1, minWidth: 0 }}>
+              {draft.map((bp, i) => (
+                <Text key={bp.bodyPart} style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
+                  {bp.bodyPart}
+                </Text>
+              ))}
+              {exercises.length > 0 && (
+                <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
+                  {bodyPart ?? '—'}
+                </Text>
+              )}
+            </View>
+            {/* Locked date */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+              <Ionicons name="calendar-outline" size={18} color={colors.textMuted} />
+              <Text style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
+                {new Date(date).toLocaleDateString(undefined, {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                })} {new Date(date).getFullYear()}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
       <FlatList
         contentContainerStyle={{ padding: spacing.m, paddingBottom: 120 }}
         keyboardShouldPersistTaps="handled"
         data={[0]}
         renderItem={() => (
           <View>
-            {renderDraftSummary()}
-
-            {/* Step 1 — body part */}
-            <SectionTitle>1 · Body part</SectionTitle>
-            <Card>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setPartPickerOpen(true)}
-                style={{
-                  minHeight: touchTarget,
-                  borderRadius: radius,
-                  backgroundColor: colors.surfaceAlt,
-                  justifyContent: 'center',
-                  paddingHorizontal: spacing.m,
-                }}
-              >
-                <Text style={{ color: bodyPart ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
-                  {bodyPart ?? 'Select body part…'}
-                </Text>
-              </Pressable>
-              <TextInput
-                value={customPart}
-                onChangeText={(t) => {
-                  setCustomPart(t);
-                  // Typing a custom name selects it (overrides the preset).
-                  setBodyPart(t.trim() ? t.trim() : null);
-                }}
-                placeholder="…or type a custom body part"
-                placeholderTextColor={colors.textMuted}
-                style={{
-                  marginTop: spacing.s,
-                  minHeight: touchTarget,
-                  borderRadius: radius,
-                  backgroundColor: colors.surfaceAlt,
-                  color: colors.text,
-                  paddingHorizontal: spacing.m,
-                  fontSize: fontSize.body,
-                }}
-              />
-            </Card>
-
-            {/* Step 2 — exercises under the body part */}
-            <SectionTitle>2 · Exercises</SectionTitle>
-            <Card>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setExPickerOpen(true)}
-                style={{
-                  minHeight: touchTarget,
-                  borderRadius: radius,
-                  backgroundColor: colors.surfaceAlt,
-                  justifyContent: 'center',
-                  paddingHorizontal: spacing.m,
-                }}
-              >
-                <Text style={{ color: exName ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
-                  {exName || 'Add exercise (pick or type free text)…'}
-                </Text>
-              </Pressable>
-              <Button
-                label="Add exercise"
-                variant="secondary"
-                onPress={() => addExercise(exName)}
-                style={{ marginTop: spacing.s }}
-              />
-
-              {exercises.map((ex, i) => (
-                <View
-                  key={`${ex.name}-${i}`}
-                  style={{
-                    marginTop: spacing.m,
-                    paddingTop: spacing.s,
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: colors.border,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
-                      {ex.name}
-                    </Text>
-                    <Pressable accessibilityRole="button" onPress={() => removeExercise(i)} hitSlop={8}>
-                      <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
-                    </Pressable>
-                  </View>
-
-                  {ex.sets.map((s, j) => (
-                    <View
-                      key={j}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.s, marginTop: spacing.s }}
-                    >
-                      <Text style={{ color: colors.textMuted, width: 34, fontSize: fontSize.caption }}>
-                        Set {j + 1}
+            {/* Screen 1: Initial selection (date, body part, exercise) */}
+            {isInitialScreen && (
+              <>
+                {/* Workout date selection */}
+                <Card style={{ marginBottom: spacing.m }}>
+                  <View style={{ padding: spacing.s }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Text style={{ color: colors.text, fontSize: fontSize.body, fontWeight: '700' }}>
+                        Workout date
                       </Text>
-                      <TextInput
-                        value={s.weight}
-                        onChangeText={(t) => updateSet(i, j, { weight: t })}
-                        keyboardType="decimal-pad"
-                        placeholder="kg"
-                        placeholderTextColor={colors.textMuted}
-                        style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
-                      />
-                      <TextInput
-                        value={s.reps}
-                        onChangeText={(t) => updateSet(i, j, { reps: t })}
-                        keyboardType="number-pad"
-                        placeholder="reps"
-                        placeholderTextColor={colors.textMuted}
-                        style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
-                      />
                       <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove set ${j + 1}`}
-                        onPress={() => removeSet(i, j)}
-                        hitSlop={8}
-                        style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+                        style={{ padding: spacing.s, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius, backgroundColor: colors.surfaceAlt, minHeight: 44 }}
+                        onPress={showDatePicker}
                       >
-                        <Ionicons name="close" size={20} color={colors.destructive} />
+                        <Text style={{ color: colors.text }}>
+                          {new Date(date).toLocaleDateString(undefined, {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                          })} {new Date(date).getFullYear()}
+                        </Text>
+                        <Ionicons name="chevron-down" size={18} color={colors.textMuted} style={{ marginLeft: 8 }} />
                       </Pressable>
                     </View>
-                  ))}
+                  </View>
+                </Card>
 
-                  <View style={{ flexDirection: 'row', gap: spacing.s, marginTop: spacing.s }}>
+                {/* Step 1 — body part */}
+                <SectionTitle>1 · Body part</SectionTitle>
+                <Card>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setPartPickerOpen(true)}
+                    style={{
+                      minHeight: touchTarget,
+                      borderRadius: radius,
+                      backgroundColor: colors.surfaceAlt,
+                      justifyContent: 'center',
+                      paddingHorizontal: spacing.m,
+                    }}
+                  >
+                    <Text style={{ color: bodyPart ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
+                      {bodyPart ?? 'Select body part…'}
+                    </Text>
+                  </Pressable>
+                </Card>
+
+                {/* Step 2 — exercises under the body part */}
+                <SectionTitle>2 · Exercises</SectionTitle>
+                <Card>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setExPickerOpen(true)}
+                    style={{
+                      minHeight: touchTarget,
+                      borderRadius: radius,
+                      backgroundColor: colors.surfaceAlt,
+                      justifyContent: 'center',
+                      paddingHorizontal: spacing.m,
+                    }}
+                  >
+                    <Text style={{ color: exName ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
+                      {exName || 'Add exercise (pick or type free text)…'}
+                    </Text>
+                  </Pressable>
+                  <Button
+                    label="Add exercise"
+                    variant="secondary"
+                    onPress={() => addExercise(exName)}
+                    style={{ marginTop: spacing.s }}
+                  />
+                </Card>
+
+                {/* Step 3 — commit this body part, continue or finish */}
+                <Card>
+                  <View style={{ gap: spacing.s }}>
                     <Button
-                      label="Add set"
-                      variant="ghost"
-                      size="sm"
-                      onPress={() => addSet(i)}
-                      style={{ alignSelf: 'flex-start' }}
+                      label="Add another body part"
+                      variant="secondary"
+                      onPress={commitBodyPart}
                     />
                     <Button
-                      label="Duplicate last set"
-                      variant="ghost"
-                      size="sm"
-                      onPress={() => duplicateLastSet(i)}
-                      style={{ alignSelf: 'flex-start' }}
+                      label={saving ? 'Saving…' : 'Finish & save workout'}
+                      onPress={saveSession}
+                      disabled={saving}
                     />
                   </View>
-                </View>
-              ))}
-            </Card>
+                  {error ? (
+                    <Text style={{ color: colors.destructive, marginTop: spacing.m, fontSize: fontSize.caption }}>
+                      {error}
+                    </Text>
+                  ) : null}
+                </Card>
+              </>
+            )}
 
-            {/* Step 3 — commit this body part, continue or finish */}
-            <SectionTitle>3 · Done with this body part?</SectionTitle>
-            <Card>
-              <View style={{ gap: spacing.s }}>
-                <Button label="Add another body part" variant="secondary" onPress={commitBodyPart} />
-                <Button
-                  label={saving ? 'Saving…' : 'Finish & save workout'}
-                  onPress={saveSession}
-                  disabled={saving}
-                />
-              </View>
-            </Card>
+            {/* Screen 2+: Exercise entry mode */}
+            {!isInitialScreen && (
+              <>
+                {/* Collapsed summary of committed body parts (draft) */}
+                {draft.length > 0 && (
+                  <Card style={{ marginBottom: spacing.m }}>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body, marginBottom: spacing.s }}>
+                      Completed body parts
+                    </Text>
+                    {draft.map((bp, i) => (
+                      <View key={`${bp.bodyPart}-${i}`} style={{ marginTop: spacing.s }}>
+                        <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.caption }}>
+                          {bp.bodyPart}
+                        </Text>
+                        {bp.exercises.map((e, j) => (
+                          <Text key={j} style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
+                            • {e.name} — {e.sets.map((s) => `${s.weight}kg×${s.reps}`).join(', ')}
+                          </Text>
+                        ))}
+                      </View>
+                    ))}
+                  </Card>
+                )}
 
-            {error ? (
-              <Text style={{ color: colors.destructive, marginTop: spacing.m, fontSize: fontSize.caption }}>
-                {error}
-              </Text>
-            ) : null}
+                {/* Active body part header */}
+                {bodyPart && (
+                  <View style={{ marginBottom: spacing.s, paddingHorizontal: spacing.xs }}>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
+                      {bodyPart}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Active exercise entry area */}
+                <Card>
+                  {exercises.length > 0 ? (
+                    <>
+                      <SectionTitle>Exercise entry</SectionTitle>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => setExPickerOpen(true)}
+                        style={{
+                          minHeight: touchTarget,
+                          borderRadius: radius,
+                          backgroundColor: colors.surfaceAlt,
+                          justifyContent: 'center',
+                          paddingHorizontal: spacing.m,
+                        }}
+                      >
+                        <Text style={{ color: exName ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
+                          {exName || 'Add exercise (pick or type free text)…'}
+                        </Text>
+                      </Pressable>
+                      <Button
+                        label="Add exercise"
+                        variant="secondary"
+                        onPress={() => addExercise(exName)}
+                        style={{ marginTop: spacing.s }}
+                      />
+
+                      {exercises.map((ex, i) => (
+                        <View
+                          key={`${ex.name}-${i}`}
+                          style={{
+                            marginTop: spacing.m,
+                            paddingTop: spacing.s,
+                            borderTopWidth: StyleSheet.hairlineWidth,
+                            borderTopColor: colors.border,
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
+                              {ex.name}
+                            </Text>
+                            <Pressable accessibilityRole="button" onPress={() => removeExercise(i)} hitSlop={8}>
+                              <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
+                            </Pressable>
+                          </View>
+
+                          {ex.sets.map((s, j) => (
+                            <View
+                              key={j}
+                              style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.s, marginTop: spacing.s }}
+                            >
+                              <Text style={{ color: colors.textMuted, width: 34, fontSize: fontSize.caption }}>
+                                Set {j + 1}
+                              </Text>
+                              <TextInput
+                                value={s.weight}
+                                onChangeText={(t) => updateSet(i, j, { weight: t })}
+                                keyboardType="decimal-pad"
+                                placeholder="kg"
+                                placeholderTextColor={colors.textMuted}
+                                style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
+                              />
+                              <TextInput
+                                value={s.reps}
+                                onChangeText={(t) => updateSet(i, j, { reps: t })}
+                                keyboardType="number-pad"
+                                placeholder="reps"
+                                placeholderTextColor={colors.textMuted}
+                                style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
+                              />
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={`Remove set ${j + 1}`}
+                                onPress={() => removeSet(i, j)}
+                                hitSlop={8}
+                                style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+                              >
+                                <Ionicons name="close" size={20} color={colors.destructive} />
+                              </Pressable>
+                            </View>
+                          ))}
+
+                          <View style={{ flexDirection: 'row', gap: spacing.s, marginTop: spacing.s }}>
+                            <Button
+                              label="Add set"
+                              variant="ghost"
+                              size="sm"
+                              onPress={() => addSet(i)}
+                              style={{ alignSelf: 'flex-start' }}
+                            />
+                          </View>
+                        </View>
+                      ))}
+                    </>
+                  ) : (
+                    <>
+                      <SectionTitle>2 · Exercises</SectionTitle>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => setExPickerOpen(true)}
+                        style={{
+                          minHeight: touchTarget,
+                          borderRadius: radius,
+                          backgroundColor: colors.surfaceAlt,
+                          justifyContent: 'center',
+                          paddingHorizontal: spacing.m,
+                        }}
+                      >
+                        <Text style={{ color: exName ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
+                          {exName || 'Add exercise (pick or type free text)…'}
+                        </Text>
+                      </Pressable>
+                      <Button
+                        label="Add exercise"
+                        variant="secondary"
+                        onPress={() => addExercise(exName)}
+                        style={{ marginTop: spacing.s }}
+                      />
+                    </>
+                  )}
+                </Card>
+
+                {/* Step 3 — commit this body part, continue or finish */}
+                <Card>
+                  <View style={{ gap: spacing.s }}>
+                    <Button
+                      label="Add another body part"
+                      variant="secondary"
+                      onPress={commitBodyPart}
+                    />
+                    <Button
+                      label={saving ? 'Saving…' : 'Finish & save workout'}
+                      onPress={saveSession}
+                      disabled={saving}
+                    />
+                  </View>
+                  {error ? (
+                    <Text style={{ color: colors.destructive, marginTop: spacing.m, fontSize: fontSize.caption }}>
+                      {error}
+                    </Text>
+                  ) : null}
+                </Card>
+              </>
+            )}
           </View>
         )}
       />
@@ -480,6 +685,8 @@ export function AddWorkoutScreen({ navigation }: any) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {renderDatePicker()}
     </View>
   );
 }
