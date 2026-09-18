@@ -17,6 +17,7 @@ import { useWorkoutStore, BodyPartInput } from '../stores/appStores';
 import { todayISO } from '../data/repositories';
 import { Button, Card, SectionTitle, ConfirmDialog } from '../components/ui';
 import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
+import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
 import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
@@ -99,10 +100,44 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     [customExercises],
   );
 
+  // Body parts already in draft (for visual markers in picker)
+  const draftBodyParts = useMemo(() => new Set(draft.map((bp) => bp.bodyPart)), [draft]);
+
   const resetExerciseForm = () => {
     setExName('');
     setExercises([]);
     setExPickerForBodyPart(null);
+  };
+
+  /** Open the shared body-part picker modal. */
+  const openBodyPartPicker = () => {
+    setPartPickerOpen(true);
+  };
+
+  /** Handle confirmation from the shared body-part picker. */
+  const handleBodyPartPickerConfirm = (selectedBodyPart: string) => {
+    const alreadyInDraft = draftBodyParts.has(selectedBodyPart);
+    if (alreadyInDraft) {
+      // Auto-expand the existing body part and show toast
+      setExpandedDraftParts((prev) => {
+        const next = new Set(prev);
+        next.clear();
+        next.add(selectedBodyPart);
+        return next;
+      });
+      showToast(`${selectedBodyPart} is already in this session — add more exercises to it below.`);
+    } else {
+      // Set the new body part for exercise entry
+      setBodyPart(selectedBodyPart);
+      setCustomPart('');
+      resetExerciseForm();
+    }
+    setPartPickerOpen(false);
+  };
+
+  /** Handle dismissal of the shared body-part picker (Exit, backdrop, back button). */
+  const handleBodyPartPickerDismiss = () => {
+    setPartPickerOpen(false);
   };
 
   /** Open exercise picker for a specific body part (from expanded card or active entry). */
@@ -133,7 +168,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     setBodyPart(null);
     setCustomPart('');
     resetExerciseForm();
-    setPartPickerOpen(true);
+    openBodyPartPicker();
   };
 
   /** Toggle expansion of a draft body part in the summary list. */
@@ -493,7 +528,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             <Button
               label="Add body part"
               variant="secondary"
-              onPress={startNewBodyPart}
+              onPress={openBodyPartPicker}
               style={{ marginTop: spacing.m, marginBottom: spacing.m }}
             />
 
@@ -607,7 +642,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
                 <Button
                   label="Add another body part"
                   variant="secondary"
-                  onPress={commitBodyPart}
+                  onPress={openBodyPartPicker}
                 />
                 <Button
                   label={saving ? 'Saving…' : 'Save Changes'}
@@ -625,38 +660,14 @@ export function EditWorkoutScreen({ navigation, route }: any) {
         )}
       />
 
-      {/* Body part picker modal */}
-      <Modal visible={partPickerOpen} transparent animationType="fade" onRequestClose={() => setPartPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setPartPickerOpen(false)}>
-          <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.title, marginBottom: spacing.m }}>
-              Select body part
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s }}>
-              {Object.keys(EXERCISE_LIBRARY).map((p) => (
-                <Pressable
-                  key={p}
-                  accessibilityRole="button"
-                  onPress={() => {
-                    setBodyPart(p);
-                    setCustomPart('');
-                    setPartPickerOpen(false);
-                  }}
-                  style={{
-                    minHeight: touchTarget,
-                    justifyContent: 'center',
-                    paddingHorizontal: spacing.m,
-                    borderRadius: radius,
-                    backgroundColor: bodyPart === p ? colors.accent : colors.surfaceAlt,
-                  }}
-                >
-                  <Text style={{ color: bodyPart === p ? colors.accentText : colors.text }}>{p}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Shared body-part picker modal */}
+      <BodyPartPickerModal
+        visible={partPickerOpen}
+        onClose={handleBodyPartPickerDismiss}
+        onConfirm={handleBodyPartPickerConfirm}
+        alreadyInDraft={draftBodyParts}
+        currentBodyPart={bodyPart}
+      />
 
       {/* Exercise picker modal */}
       <Modal visible={exPickerOpen} transparent animationType="fade" onRequestClose={() => { setExPickerOpen(false); setExPickerForBodyPart(null); }}>
