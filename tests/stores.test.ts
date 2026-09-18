@@ -19,7 +19,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 import { useWorkoutStore, useDietStore, BodyPartInput } from '../stores/appStores';
-import { todayISO, shiftISODate, computeStreak } from '../data/repositories';
+import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
+import { todayISO, shiftISODate, computeStreak, customExerciseRepository } from '../data/repositories';
 import { WorkoutSession, DietLog } from '../data/models';
 
 /** Reset zustand modules to a pristine state and clear fake storage. */
@@ -30,6 +31,7 @@ function resetStores() {
     todayLog: { date: todayISO(), protein: 0, carbs: 0, fats: 0, fiber: 0 },
     hydrated: false,
   });
+  useExerciseLibraryStore.setState({ custom: {}, hydrated: false });
 }
 
 beforeEach(() => {
@@ -257,5 +259,76 @@ describe('useDietStore', () => {
     expect(persisted).toHaveLength(2);
     expect(persisted.find((l) => l.date === shiftISODate(todayISO(), -1))?.protein).toBe(80);
     expect(useDietStore.getState().todayLog.protein).toBe(0);
+  });
+});
+
+/* -------------------------- custom exercise store ------------------------ */
+
+describe('useExerciseLibraryStore', () => {
+  beforeEach(() => {
+    storage.clear();
+    useExerciseLibraryStore.setState({ custom: {}, hydrated: false });
+  });
+
+  it('hydrate loads custom exercises from storage', async () => {
+    storage.set('exercises.custom.v1', JSON.stringify({ Chest: ['Custom Fly'] }));
+
+    await useExerciseLibraryStore.getState().hydrate();
+
+    const state = useExerciseLibraryStore.getState();
+    expect(state.hydrated).toBe(true);
+    expect(state.custom.Chest).toEqual(['Custom Fly']);
+  });
+
+  it('addCustomExercise adds a new custom exercise and persists it', async () => {
+    await useExerciseLibraryStore.getState().hydrate();
+
+    useExerciseLibraryStore.getState().addCustomExercise('Chest', 'Custom Fly');
+
+    const state = useExerciseLibraryStore.getState();
+    expect(state.custom.Chest).toEqual(['Custom Fly']);
+
+    const persisted = JSON.parse(storage.get('exercises.custom.v1')!);
+    expect(persisted.Chest).toEqual(['Custom Fly']);
+  });
+
+  it('addCustomExercise does not duplicate existing custom exercises (case-insensitive)', async () => {
+    await useExerciseLibraryStore.getState().hydrate();
+
+    useExerciseLibraryStore.getState().addCustomExercise('Chest', 'Custom Fly');
+    useExerciseLibraryStore.getState().addCustomExercise('Chest', 'custom fly');
+
+    const state = useExerciseLibraryStore.getState();
+    expect(state.custom.Chest).toEqual(['Custom Fly']);
+  });
+
+  it('addCustomExercise does not add preset exercises as custom', async () => {
+    await useExerciseLibraryStore.getState().hydrate();
+
+    useExerciseLibraryStore.getState().addCustomExercise('Chest', 'Bench Press');
+
+    const state = useExerciseLibraryStore.getState();
+    expect(state.custom.Chest ?? []).toEqual([]);
+  });
+
+  it('addCustomExercise creates new body part array when needed', async () => {
+    await useExerciseLibraryStore.getState().hydrate();
+
+    useExerciseLibraryStore.getState().addCustomExercise('Back', 'Custom Row');
+
+    const state = useExerciseLibraryStore.getState();
+    expect(state.custom.Back).toEqual(['Custom Row']);
+  });
+
+  it('custom exercises persist across app reload (hydrate)', async () => {
+    await useExerciseLibraryStore.getState().hydrate();
+    useExerciseLibraryStore.getState().addCustomExercise('Chest', 'Custom Fly');
+
+    // Simulate app restart
+    useExerciseLibraryStore.setState({ custom: {}, hydrated: false });
+    await useExerciseLibraryStore.getState().hydrate();
+
+    const state = useExerciseLibraryStore.getState();
+    expect(state.custom.Chest).toEqual(['Custom Fly']);
   });
 });

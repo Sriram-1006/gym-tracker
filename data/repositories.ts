@@ -10,6 +10,7 @@ import { storageService } from './services/storageService';
 const WORKOUTS_KEY = 'workouts.sessions.v1';
 const DIET_TARGETS_KEY = 'diet.targets.v1';
 const DIET_LOGS_KEY = 'diet.logs.v1';
+const CUSTOM_EXERCISES_KEY = 'exercises.custom.v1';
 
 /* ------------------------------ helpers ------------------------------ */
 
@@ -60,6 +61,18 @@ export const workoutRepository = {
     if (idx === -1) throw new Error('Session not found');
     sessions[idx] = { ...sessions[idx], ...updated } as WorkoutSession;
     await storageService.setItem(WORKOUTS_KEY, sessions);
+  },
+};
+
+/* ----------------------- custom exercise repo -------------------------- */
+
+export const customExerciseRepository = {
+  async getAll(): Promise<Record<string, string[]>> {
+    return (await storageService.getItem<Record<string, string[]>>(CUSTOM_EXERCISES_KEY)) ?? {};
+  },
+
+  async saveAll(byBodyPart: Record<string, string[]>): Promise<void> {
+    await storageService.setItem(CUSTOM_EXERCISES_KEY, byBodyPart);
   },
 };
 

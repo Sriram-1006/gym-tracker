@@ -73,11 +73,14 @@ Example: train Mon, Tue, mark Wed as rest, train Thu → your Thu streak shows *
 
 Tap the button again (“Unmark rest”) if you marked a rest day by mistake.
 
-### Browsing & deleting past workouts
+### Browsing & editing past workouts
 
 The **Previous workouts** list (most recent first) shows each session's date, the body parts trained and the total number of sets. Tap any entry to open a **read-only** detail view with every exercise and set.
 
-To remove an entry, tap the **trash icon** on its row (or the trash icon in the detail view's header) and confirm — deleting a workout or rest-day marker updates the strength graph and recomputes the streak immediately. Deletion is permanent and persists across app restarts. A brief **“Workout deleted”** toast confirms each deletion.
+From the detail view you can:
+
+- **Edit** — tap the **pencil icon** in the header to open the full editor (change date, add/remove body parts, exercises, sets, or reorder).
+- **Delete** — tap the **trash icon** in the header and confirm — deleting a workout or rest-day marker updates the strength graph and recomputes the streak immediately. Deletion is permanent and persists across app restarts. A brief **“Workout deleted”** toast confirms each deletion.
 
 ---
 
@@ -152,6 +155,14 @@ React Native (Expo SDK 54) · TypeScript · React Navigation (bottom tabs + nati
 ---
 
 ## Changelog
+
+### 1.0.4 — Edit from detail, cleaner history list
+
+- **Added: Edit button on WorkoutDetail header.** Pencil icon next to the trash icon opens the full `EditWorkoutScreen` with the session pre-loaded. One tap from the read-only view to full editing.
+- **Fixed: history list rows no longer show a delete icon.** The trash icon was removed from each row to prevent accidental deletions while scrolling. Delete remains available (and intentional) from the detail view's header via the themed ConfirmDialog.
+- **Fixed: tapping a workout row now opens WorkoutDetail (read-only).** Previously it incorrectly opened the EditWorkout screen (a regression introduced in the prior refactor). Now the flow is: Home → tap row → WorkoutDetail → (pencil) → EditWorkout → Save → back to Home.
+
+### 1.0.3 — Stray text-cursor bug fix
 
 ### 1.0.2 — Delete-flow fix & verification pass
 

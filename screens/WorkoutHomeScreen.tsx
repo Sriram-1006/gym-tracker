@@ -56,24 +56,9 @@ export function WorkoutHomeScreen({ navigation }: any) {
     return `${parts || '—'} · ${totalSets} set${totalSets === 1 ? '' : 's'} · ${Math.round(
       computeSessionStrength(s),
     )} vol`;
-  };
+};
 
-  /* ------------------------------- actions ------------------------------- */
-
-  /** Ask for confirmation, then delete for real and surface a toast. */
-  const confirmDelete = (session: WorkoutSession) => {
-    const what = session.restDay ? 'rest day marker' : 'workout';
-    setDialog({
-      title: 'Delete this workout?',
-      message: `This can't be undone. This removes the ${what} from ${session.date}.`,
-      confirmLabel: 'Delete',
-      destructive: true,
-      onConfirm: () => {
-        setDialog(null);
-        void deleteSession(session.id).then(() => showToast('Workout deleted'));
-      },
-    });
-  };
+/* ------------------------------- actions ------------------------------- */
 
   const handleRestPress = () => {
     if (todayIsRest) {
@@ -117,20 +102,10 @@ export function WorkoutHomeScreen({ navigation }: any) {
         { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius },
       ]}
     >
-      {/* Delete zone beside each entry (tap with the trash icon to remove). */}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Delete workout from ${item.date}`}
-        onPress={() => confirmDelete(item)}
-        style={styles.deleteZone}
-      >
-        <Ionicons name="trash-outline" size={22} color={colors.destructive} />
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Edit workout from ${item.date}`}
-        onPress={() => navigation.navigate('EditWorkout', { sessionId: item.id })}
+        accessibilityLabel={`View workout from ${item.date}`}
+        onPress={() => navigation.navigate('WorkoutDetail', { sessionId: item.id })}
         style={styles.rowMain}
       >
         <View style={styles.rowTitleLine}>
@@ -298,11 +273,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  deleteZone: {
-    width: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   iconButton: {
     minHeight: 44,

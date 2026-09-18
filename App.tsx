@@ -7,6 +7,7 @@ import { ThemeContext } from './theme/ThemeContext';
 import { getTheme } from './theme/theme';
 import { useThemeStore } from './theme/themeStore';
 import { useWorkoutStore, useDietStore } from './stores/appStores';
+import { useExerciseLibraryStore } from './stores/exerciseLibraryStore';
 import { RootNavigator } from './navigation';
 import { ToastHost } from './components/Toast';
 
@@ -15,16 +16,17 @@ export default function App() {
   const hydrateTheme = useThemeStore((s) => s.hydrate);
   const hydrateWorkouts = useWorkoutStore((s) => s.hydrate);
   const hydrateDiet = useDietStore((s) => s.hydrate);
+  const hydrateExercises = useExerciseLibraryStore((s) => s.hydrate);
 
   const [ready, setReady] = useState(false);
   const theme = getTheme(mode);
 
   useEffect(() => {
     (async () => {
-      await Promise.all([hydrateTheme(), hydrateWorkouts(), hydrateDiet()]);
+      await Promise.all([hydrateTheme(), hydrateWorkouts(), hydrateDiet(), hydrateExercises()]);
       setReady(true);
     })();
-  }, [hydrateTheme, hydrateWorkouts, hydrateDiet]);
+  }, [hydrateTheme, hydrateWorkouts, hydrateDiet, hydrateExercises]);
 
   if (!ready) {
     return (

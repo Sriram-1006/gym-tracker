@@ -56,16 +56,26 @@ export function WorkoutDetailScreen({ route, navigation }: any) {
       <Text style={{ color: colors.text, fontSize: fontSize.title, fontWeight: '800' }}>
         Workout
       </Text>
-      {/* Delete lives here too, not only on the list row. */}
+      {/* Action buttons: Edit | Delete */}
       {session ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Delete this workout"
-          onPress={confirmDelete}
-          style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Ionicons name="trash-outline" size={20} color={colors.destructive} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Edit this workout"
+            onPress={() => navigation.navigate('EditWorkout', { sessionId: session.id })}
+            style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="create-outline" size={20} color={colors.accent} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Delete this workout"
+            onPress={confirmDelete}
+            style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="trash-outline" size={20} color={colors.destructive} />
+          </Pressable>
+        </View>
       ) : (
         <View style={{ width: 44 }} />
       )}

@@ -15,10 +15,18 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkoutStore, BodyPartInput } from '../stores/appStores';
 import { todayISO } from '../data/repositories';
-import { Button, Card, SectionTitle } from '../components/ui';
+import { Button, Card, SectionTitle, ConfirmDialog } from '../components/ui';
+import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { showToast } from '../components/Toast';
 import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
+import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
+
+/** Parse ISO date string (YYYY-MM-DD) as local date, not UTC. */
+function parseISODateLocal(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
 
 type DraftSet = { weight: string; reps: string };
 
@@ -38,27 +46,36 @@ export function EditWorkoutScreen({ navigation, route }: any) {
   const sessions = useWorkoutStore((s) => s.sessions);
   const session = sessions.find((s) => s.id === sessionId);
 
-  if (!session) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <Text style={{ color: colors.text, fontSize: fontSize.body, textAlign: 'center' }}>
-          Workout not found
-        </Text>
-      </View>
-    );
-  }
+  // Defensive initialization - don't return early before hooks
+  const sessionBodyParts = session?.bodyParts ?? [];
 
   const today = todayISO();
 
   // Current editing state
-  const [draft, setDraft] = useState<BodyPartInput[]>(session.bodyParts);
+  const [draft, setDraft] = useState<BodyPartInput[]>(sessionBodyParts);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Custom exercises from library store
+  const customExercises = useExerciseLibraryStore((s) => s.custom);
+  const addCustomExercise = useExerciseLibraryStore((s) => s.addCustomExercise);
 
   // Editing exercise / set state
   const [bodyPart, setBodyPart] = useState<string | null>(null);
   const [customPart, setCustomPart] = useState('');
   const [partPickerOpen, setPartPickerOpen] = useState(false);
+
+  // Which draft body parts are expanded for editing
+  const [expandedDraftParts, setExpandedDraftParts] = useState<Set<string>>(new Set());
+
+  // Confirmation dialogs for deletions and save changes
+  const [confirmDelete, setConfirmDelete] = useState<{
+    type: 'set' | 'exercise' | 'bodyPart';
+    bodyPartName?: string;
+    exerciseIndex?: number;
+    setIndex?: number;
+    onConfirm: () => void;
+  } | null>(null);
 
   const [exercises, setExercises] = useState<
     { name: string; sets: DraftSet[] }[]
@@ -66,8 +83,9 @@ export function EditWorkoutScreen({ navigation, route }: any) {
 
   const [exName, setExName] = useState('');
   const [exPickerOpen, setExPickerOpen] = useState(false);
+  const [exPickerForBodyPart, setExPickerForBodyPart] = useState<string | null>(null);
 
-  const [date, setDate] = useState<string>(session.date);
+  const [date, setDate] = useState<string>(session?.date ?? todayISO());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
 
   // Preset sets mapping
@@ -76,9 +94,39 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     [],
   );
 
+  const allExercisesFor = useMemo(
+    () => (part: string) => [...(EXERCISE_LIBRARY[part] ?? []), ...(customExercises[part] ?? [])],
+    [customExercises],
+  );
+
   const resetExerciseForm = () => {
     setExName('');
     setExercises([]);
+    setExPickerForBodyPart(null);
+  };
+
+  /** Open exercise picker for a specific body part (from expanded card or active entry). */
+  const openExercisePicker = (forBodyPart?: string) => {
+    if (forBodyPart) {
+      setExPickerForBodyPart(forBodyPart);
+    }
+    setExPickerOpen(true);
+  };
+
+  /** Add exercise directly to a draft body part (from expanded card). */
+  const addExerciseToDraftBodyPart = (bpName: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setDraft((d) =>
+      d.map((bp) => {
+        if (bp.bodyPart !== bpName) return bp;
+        return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [{ weight: 0, reps: 0 }] }] };
+      }),
+    );
+    // If this is a custom exercise, save it to the library
+    if (!EXERCISE_LIBRARY[bpName]?.includes(trimmed)) {
+      addCustomExercise(bpName, trimmed);
+    }
   };
 
   const startNewBodyPart = () => {
@@ -86,6 +134,21 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     setCustomPart('');
     resetExerciseForm();
     setPartPickerOpen(true);
+  };
+
+  /** Toggle expansion of a draft body part in the summary list. */
+  const toggleDraftPartExpansion = (bodyPartName: string) => {
+    setExpandedDraftParts((prev) => {
+      const next = new Set(prev);
+      if (next.has(bodyPartName)) {
+        next.delete(bodyPartName);
+      } else {
+        // Accordion behavior: close others, open this one
+        next.clear();
+        next.add(bodyPartName);
+      }
+      return next;
+    });
   };
 
   /** Validates and commits the in-progress body part into draft. */
@@ -126,27 +189,41 @@ export function EditWorkoutScreen({ navigation, route }: any) {
 
   /** Save changes — update the existing workout and navigate back. */
   const saveChanges = async () => {
-    // Commit any remaining body part
-    if (bodyPart) {
-      await commitBodyPart();
-    }
-    if (error) return;
+    // Commit any remaining body part - capture return value to avoid stale state
+    const pending = bodyPart && exercises.length > 0 ? commitBodyPart() : null;
+    if (pending === null && bodyPart && exercises.length > 0) return; // validation error
+    const finalDraft = pending ? [...draft, pending] : draft;
 
-    const dateToUse = date ?? todayISO();
-
-    setSaving(true);
-    try {
-      await updateSession(sessionId, {
-        date: dateToUse,
-        bodyParts: draft,
-      });
-      showToast('Workout updated');
-      navigation.goBack();
-    } catch (e) {
-      showToast('Could not update workout — please try again');
-    } finally {
-      setSaving(false);
+    if (finalDraft.length === 0) {
+      setError('Nothing to save — add at least one exercise.');
+      return;
     }
+
+    // Count for confirmation dialog
+    const totalExercises = finalDraft.reduce((a, bp) => a + bp.exercises.length, 0);
+    const totalSets = finalDraft.reduce((a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0), 0);
+
+    setConfirmDelete({
+      type: 'bodyPart', // reuse type for confirmation
+      bodyPartName: 'Save Changes',
+      onConfirm: async () => {
+        const dateToUse = date ?? todayISO();
+
+        setSaving(true);
+        try {
+          await updateSession(sessionId, {
+            date: dateToUse,
+            bodyParts: finalDraft,
+          });
+          showToast('Workout updated');
+          navigation.goBack();
+        } catch (e) {
+          showToast('Could not update workout — please try again');
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
   };
 
   /* ----------------------------- exercise ops ---------------------------- */
@@ -156,6 +233,10 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     if (!trimmed) return;
     setExercises((xs) => [...xs, { name: trimmed, sets: [{ weight: '', reps: '' }] }]);
     setExName('');
+    // If this is a custom exercise (not in presets), save it to the library
+    if (bodyPart && !EXERCISE_LIBRARY[bodyPart]?.includes(trimmed)) {
+      addCustomExercise(bodyPart, trimmed);
+    }
   };
 
   const updateSet = (exIdx: number, setIdx: number, patch: Partial<DraftSet>) => {
@@ -204,72 +285,93 @@ export function EditWorkoutScreen({ navigation, route }: any) {
 
   /* ------------------------------- rendering ----------------------------- */
 
-  const loadBodyPartForEdit = (bp: BodyPartInput) => {
-    setBodyPart(bp.bodyPart);
-    setCustomPart('');
-    setExercises(bp.exercises.map((e) => ({ name: e.name, sets: e.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })) })));
-    // Remove from draft since we're editing it
-    setDraft((d) => d.filter((x) => x.bodyPart !== bp.bodyPart));
+  // Handler functions for the shared WorkoutDraftEditor component
+  const handleRemoveBodyPart = (bodyPartName: string) => {
+    setConfirmDelete({
+      type: 'bodyPart',
+      bodyPartName,
+      onConfirm: () => {
+        setDraft((d) => d.filter((bp) => bp.bodyPart !== bodyPartName));
+      },
+    });
   };
 
-  const renderDraftSummary = () => {
-    if (draft.length === 0 && exercises.length === 0) return null;
-    const totalSets = draft.reduce(
-      (a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0),
-      0,
-    ) + exercises.reduce(
-      (a, e) => a + e.sets.length,
-      0,
+  const handleRemoveExercise = (bodyPartName: string, exerciseIndex: number) => {
+    setConfirmDelete({
+      type: 'exercise',
+      bodyPartName,
+      exerciseIndex,
+      onConfirm: () => {
+        setDraft((d) =>
+          d.map((bp) => {
+            if (bp.bodyPart !== bodyPartName) return bp;
+            return { ...bp, exercises: bp.exercises.filter((_, i) => i !== exerciseIndex) };
+          }),
+        );
+      },
+    });
+  };
+
+  const handleRemoveSet = (bodyPartName: string, exerciseIndex: number, setIndex: number) => {
+    setConfirmDelete({
+      type: 'set',
+      bodyPartName,
+      exerciseIndex,
+      setIndex,
+      onConfirm: () => {
+        setDraft((d) =>
+          d.map((bp) => {
+            if (bp.bodyPart !== bodyPartName) return bp;
+            return {
+              ...bp,
+              exercises: bp.exercises.map((ex, i) => {
+                if (i !== exerciseIndex) return ex;
+                return { ...ex, sets: ex.sets.filter((_, j) => j !== setIndex) };
+              }),
+            };
+          }),
+        );
+      },
+    });
+  };
+
+  const handleAddSet = (bodyPartName: string, exerciseIndex: number) => {
+    setDraft((d) =>
+      d.map((bp) => {
+        if (bp.bodyPart !== bodyPartName) return bp;
+        return {
+          ...bp,
+          exercises: bp.exercises.map((ex, i) => {
+            if (i !== exerciseIndex) return ex;
+            return { ...ex, sets: [...ex.sets, { weight: 0, reps: 0 }] };
+          }),
+        };
+      }),
     );
-    return (
-      <Card style={{ marginBottom: spacing.m }}>
-        <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
-          This session
-        </Text>
-        {draft.map((bp, i) => (
-          <Pressable
-            key={`${bp.bodyPart}-${i}`}
-            onPress={() => loadBodyPartForEdit(bp)}
-            style={{ marginTop: spacing.s, paddingVertical: spacing.xs }}
-            hitSlop={16}
-          >
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ color: colors.accent, fontWeight: '700', fontSize: fontSize.caption }}>
-                {bp.bodyPart}
-              </Text>
-              <Ionicons name="create-outline" size={18} color={colors.textMuted} />
-            </View>
-            {bp.exercises.map((e, j) => (
-              <Text key={j} style={{ color: colors.textMuted, fontSize: fontSize.caption, marginLeft: 4 }}>
-                • {e.name} — {e.sets.map((s) => `${s.weight}kg×${s.reps}`).join(', ')}
-              </Text>
-            ))}
-          </Pressable>
-        ))}
-        {exercises.length > 0 ? (
-          <View>
-            {exercises.map((e, i) => (
-              <View
-                key={`${e.name}-${i}`}
-                style={{ marginTop: spacing.s, paddingTop: spacing.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.caption }}>
-                  {e.name}
-                </Text>
-                {e.sets.map((s, j) => (
-                  <Text key={j} style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
-                    • Set {j + 1}: {s.weight}kg×{s.reps}
-                  </Text>
-                ))}
-              </View>
-            ))}
-          </View>
-        ) : null}
-        <Text style={{ color: colors.textMuted, fontSize: fontSize.caption, marginTop: spacing.s }}>
-          {totalSets} set{totalSets === 1 ? '' : 's'} total
-        </Text>
-      </Card>
+  };
+
+  const handleUpdateSet = (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: number; reps?: number }) => {
+    setDraft((d) =>
+      d.map((bp) => {
+        if (bp.bodyPart !== bodyPartName) return bp;
+        return {
+          ...bp,
+          exercises: bp.exercises.map((ex, i) => {
+            if (i !== exerciseIndex) return ex;
+            return {
+              ...ex,
+              sets: ex.sets.map((set, k) =>
+                k === setIndex ? { ...set, ...patch } : set
+              ),
+            };
+          }),
+        };
+      }),
     );
+  };
+
+  const handleAddExercise = (bodyPartName: string, exerciseName: string) => {
+    addExerciseToDraftBodyPart(bodyPartName, exerciseName);
   };
 
   /* Date selection handlers */
@@ -294,7 +396,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     if (!datePickerVisible) return null;
     return (
       <DateTimePicker
-        value={new Date(date)}
+        value={parseISODateLocal(date)}
         mode="date"
         is24Hour={true}
         display="default"
@@ -339,166 +441,167 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             {/* Date section */}
             <Card style={{ marginBottom: spacing.m }}>
               <View style={{ padding: spacing.s }}>
-                <Text style={{ color: colors.text, fontSize: fontSize.body, fontWeight: '700' }}>
-                  Workout date
-                </Text>
+                <SectionTitle>Workout date</SectionTitle>
                 <Pressable
-                  style={{ padding: spacing.s, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius, backgroundColor: colors.surfaceAlt, minHeight: 44 }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    minHeight: touchTarget,
+                    borderRadius: radius,
+                    backgroundColor: colors.surfaceAlt,
+                    paddingHorizontal: spacing.m,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: colors.border,
+                  }}
                   onPress={showDatePicker}
                 >
                   <Text style={{ color: colors.text }}>
-                    {new Date(date).toLocaleDateString(undefined, {
+                    {parseISODateLocal(date).toLocaleDateString(undefined, {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric',
-                    })} {new Date(date).getFullYear()}
+                    })} {parseISODateLocal(date).getFullYear()}
                   </Text>
-                  <Ionicons name="chevron-down" size={18} color={colors.textMuted} style={{ marginLeft: 8 }} />
+                  <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
                 </Pressable>
               </View>
             </Card>
 
             {renderDatePicker()}
 
-            {/* Body parts */}
-            <SectionTitle>1 · Body part</SectionTitle>
-            <Card>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setBodyPart(null)}
-                style={{
-                  minHeight: touchTarget,
-                  borderRadius: radius,
-                  backgroundColor: colors.surfaceAlt,
-                  justifyContent: 'center',
-                  paddingHorizontal: spacing.m,
-                }}
-              >
-                <Text style={{ color: bodyPart ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
-                  {bodyPart ?? 'Select body part…'}
-                </Text>
-              </Pressable>
-              <TextInput
-                value={customPart}
-                onChangeText={(t) => {
-                  setCustomPart(t);
-                  setBodyPart(t.trim() ? t.trim() : null);
-                }}
-                placeholder="…or type a custom body part"
-                placeholderTextColor={colors.textMuted}
-                style={{
-                  marginTop: spacing.s,
-                  minHeight: touchTarget,
-                  borderRadius: radius,
-                  backgroundColor: colors.surfaceAlt,
-                  color: colors.text,
-                  paddingHorizontal: spacing.m,
-                  fontSize: fontSize.body,
-                }}
-              />
-            </Card>
+            {/* Existing body parts from the workout — editable inline */}
+            <WorkoutDraftEditor
+              draft={draft}
+              expandedParts={expandedDraftParts}
+              onToggleExpansion={toggleDraftPartExpansion}
+              onRemoveBodyPart={handleRemoveBodyPart}
+              onRemoveExercise={handleRemoveExercise}
+              onRemoveSet={handleRemoveSet}
+              onAddSet={handleAddSet}
+              onUpdateSet={handleUpdateSet}
+              onAddExercise={handleAddExercise}
+              openExercisePicker={openExercisePicker}
+              colors={colors}
+              spacing={spacing}
+              fontSize={fontSize}
+              radius={radius}
+              touchTarget={touchTarget}
+            />
 
-            {/* Exercises under the current body part */}
-            <SectionTitle>2 · Exercises</SectionTitle>
-            <Card>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setExPickerOpen(true)}
-                style={{
-                  minHeight: touchTarget,
-                  borderRadius: radius,
-                  backgroundColor: colors.surfaceAlt,
-                  justifyContent: 'center',
-                  paddingHorizontal: spacing.m,
-                }}
-              >
-                <Text style={{ color: exName ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
-                  {exName || 'Add exercise…'}
-                </Text>
-              </Pressable>
-              <Button
-                label="Add exercise"
-                variant="secondary"
-                onPress={() => addExercise(exName)}
-                style={{ marginTop: spacing.s }}
-              />
+            {/* Add body part button */}
+            <Button
+              label="Add body part"
+              variant="secondary"
+              onPress={startNewBodyPart}
+              style={{ marginTop: spacing.m, marginBottom: spacing.m }}
+            />
 
-              {exercises.map((ex, i) => (
-                <View
-                  key={`${ex.name}-${i}`}
-                  style={{
-                    marginTop: spacing.m,
-                    paddingTop: spacing.s,
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: colors.border,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
-                      {ex.name}
+            {/* Active body part / exercise entry area */}
+            {bodyPart && (
+              <>
+                <SectionTitle>Exercise entry</SectionTitle>
+                <Card>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => openExercisePicker()}
+                    style={{
+                      minHeight: touchTarget,
+                      borderRadius: radius,
+                      backgroundColor: colors.surfaceAlt,
+                      justifyContent: 'center',
+                      paddingHorizontal: spacing.m,
+                    }}
+                  >
+                    <Text style={{ color: exName ? colors.text : colors.textMuted, fontSize: fontSize.body }}>
+                      {exName || 'Add exercise (pick or type free text)…'}
                     </Text>
-                    <Pressable accessibilityRole="button" onPress={() => removeExercise(i)} hitSlop={8}>
-                      <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
-                    </Pressable>
-                  </View>
+                  </Pressable>
+                  <Button
+                    label="Add exercise"
+                    variant="secondary"
+                    onPress={() => addExercise(exName)}
+                    style={{ marginTop: spacing.s }}
+                  />
 
-                  {ex.sets.map((s, j) => (
+                  {exercises.map((ex, i) => (
                     <View
-                      key={j}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.s, marginTop: spacing.s }}
+                      key={`${ex.name}-${i}`}
+                      style={{
+                        marginTop: spacing.m,
+                        paddingTop: spacing.s,
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: colors.border,
+                      }}
                     >
-                      <Text style={{ color: colors.textMuted, width: 34, fontSize: fontSize.caption }}>
-                        Set {j + 1}
-                      </Text>
-                      <TextInput
-                        value={s.weight}
-                        onChangeText={(t) => updateSet(i, j, { weight: t })}
-                        keyboardType="decimal-pad"
-                        placeholder="kg"
-                        placeholderTextColor={colors.textMuted}
-                        style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
-                      />
-                      <TextInput
-                        value={s.reps}
-                        onChangeText={(t) => updateSet(i, j, { reps: t })}
-                        keyboardType="number-pad"
-                        placeholder="reps"
-                        placeholderTextColor={colors.textMuted}
-                        style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
-                      />
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove set ${j + 1}`}
-                        onPress={() => removeSet(i, j)}
-                        hitSlop={8}
-                        style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
-                      >
-                        <Ionicons name="close" size={20} color={colors.destructive} />
-                      </Pressable>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
+                          {ex.name}
+                        </Text>
+                        <Pressable accessibilityRole="button" onPress={() => removeExercise(i)} hitSlop={8}>
+                          <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
+                        </Pressable>
+                      </View>
+
+                      {ex.sets.map((s, j) => (
+                        <View
+                          key={j}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.s, marginTop: spacing.s }}
+                        >
+                          <Text style={{ color: colors.textMuted, width: 34, fontSize: fontSize.caption }}>
+                            Set {j + 1}
+                          </Text>
+                          <TextInput
+                            value={s.weight}
+                            onChangeText={(t) => updateSet(i, j, { weight: t })}
+                            keyboardType="decimal-pad"
+                            placeholder="kg"
+                            placeholderTextColor={colors.textMuted}
+                            style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
+                          />
+                          <TextInput
+                            value={s.reps}
+                            onChangeText={(t) => updateSet(i, j, { reps: t })}
+                            keyboardType="number-pad"
+                            placeholder="reps"
+                            placeholderTextColor={colors.textMuted}
+                            style={[styles.setInput, { backgroundColor: colors.surfaceAlt, color: colors.text, borderRadius: radius }]}
+                          />
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove set ${j + 1}`}
+                            onPress={() => removeSet(i, j)}
+                            hitSlop={8}
+                            style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+                          >
+                            <Ionicons name="close" size={20} color={colors.destructive} />
+                          </Pressable>
+                        </View>
+                      ))}
+
+                      <View style={{ flexDirection: 'row', gap: spacing.s, marginTop: spacing.s }}>
+                        <Button
+                          label="Add set"
+                          variant="ghost"
+                          size="sm"
+                          onPress={() => addSet(i)}
+                          style={{ alignSelf: 'flex-start' }}
+                        />
+                        <Button
+                          label="Duplicate last set"
+                          variant="ghost"
+                          size="sm"
+                          onPress={() => duplicateLastSet(i)}
+                          style={{ alignSelf: 'flex-start' }}
+                        />
+                      </View>
                     </View>
                   ))}
+                </Card>
+              </>
+            )}
 
-                  <View style={{ flexDirection: 'row', gap: spacing.s, marginTop: spacing.s }}>
-                    <Button
-                      label="Add set"
-                      variant="ghost"
-                      size="sm"
-                      onPress={() => addSet(i)}
-                      style={{ alignSelf: 'flex-start' }}
-                    />
-                    <Button
-                      label="Duplicate last set"
-                      variant="ghost"
-                      size="sm"
-                      onPress={() => duplicateLastSet(i)}
-                      style={{ alignSelf: 'flex-start' }}
-                    />
-                  </View>
-                </View>
-              ))}
-            </Card>
-
-            {/* Step 3 — commit this body part, continue or finish */}
+            {/* Step 3 — commit this body part, save changes or cancel */}
             <Card>
               <View style={{ gap: spacing.s }}>
                 <Button
@@ -556,20 +659,24 @@ export function EditWorkoutScreen({ navigation, route }: any) {
       </Modal>
 
       {/* Exercise picker modal */}
-      <Modal visible={exPickerOpen} transparent animationType="fade" onRequestClose={() => setExPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setExPickerOpen(false)}>
+      <Modal visible={exPickerOpen} transparent animationType="fade" onRequestClose={() => { setExPickerOpen(false); setExPickerForBodyPart(null); }}>
+        <Pressable style={styles.backdrop} onPress={() => { setExPickerOpen(false); setExPickerForBodyPart(null); }}>
           <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.title, marginBottom: spacing.m }}>
-              {bodyPart ? `Exercises — ${bodyPart}` : 'Pick a body part first'}
+              {(exPickerForBodyPart ?? bodyPart) ? `Exercises — ${exPickerForBodyPart ?? bodyPart}` : 'Pick a body part first'}
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s }}>
-              {(bodyPart ? presetSetsFor(bodyPart) : []).map((name) => (
+              {((exPickerForBodyPart ?? bodyPart) ? allExercisesFor(exPickerForBodyPart ?? bodyPart!) : []).map((name) => (
                 <Pressable
                   key={name}
                   accessibilityRole="button"
                   onPress={() => {
                     setExName(name);
+                    if (exPickerForBodyPart) {
+                      addExerciseToDraftBodyPart(exPickerForBodyPart, name);
+                    }
                     setExPickerOpen(false);
+                    setExPickerForBodyPart(null);
                   }}
                   style={{
                     minHeight: touchTarget,
@@ -601,12 +708,49 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             <Button
               label="Use this name"
               variant="secondary"
-              onPress={() => setExPickerOpen(false)}
+              onPress={() => {
+                if (exPickerForBodyPart) {
+                  addExerciseToDraftBodyPart(exPickerForBodyPart, exName);
+                }
+                setExPickerOpen(false);
+                setExPickerForBodyPart(null);
+              }}
               style={{ marginTop: spacing.s }}
             />
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Confirmation dialog for deletions and save changes */}
+      <ConfirmDialog
+        visible={confirmDelete !== null}
+        title={
+          confirmDelete?.type === 'set'
+            ? 'Delete this set?'
+            : confirmDelete?.type === 'exercise'
+            ? 'Delete this exercise?'
+            : confirmDelete?.bodyPartName === 'Save Changes'
+            ? 'Save changes to this workout?'
+            : 'Delete this body part?'
+        }
+        message={
+          confirmDelete?.type === 'set'
+            ? 'This will remove the set from the exercise.'
+            : confirmDelete?.type === 'exercise'
+            ? 'This will remove the exercise and all its sets.'
+            : confirmDelete?.bodyPartName === 'Save Changes'
+            ? `This will update the workout to ${draft.reduce((a, bp) => a + bp.exercises.length, 0)} exercise(s) and ${draft.reduce((a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0), 0)} set(s).`
+            : 'This will remove the body part and all its exercises and sets.'
+        }
+        confirmLabel={confirmDelete?.bodyPartName === 'Save Changes' ? 'Save' : 'Delete'}
+        cancelLabel="Cancel"
+        destructive={confirmDelete?.bodyPartName !== 'Save Changes'}
+        onConfirm={() => {
+          confirmDelete?.onConfirm();
+          setConfirmDelete(null);
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </View>
   );
 }
