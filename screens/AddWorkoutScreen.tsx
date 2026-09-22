@@ -111,6 +111,19 @@ export function AddWorkoutScreen({ navigation }: any) {
     setDraft((d) =>
       d.map((bp) => {
         if (bp.bodyPart !== bpName) return bp;
+        // Check if exercise with same name (case-insensitive) already exists in this body part
+        const existingIdx = bp.exercises.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
+        if (existingIdx >= 0) {
+          // Merge: add a blank set to the existing exercise
+          const updatedExercises = [...bp.exercises];
+          updatedExercises[existingIdx] = {
+            ...updatedExercises[existingIdx],
+            sets: [...updatedExercises[existingIdx].sets, { weight: 0, reps: 0 }],
+          };
+          showToast(`${trimmed} is already in this workout — added another set to it.`);
+          return { ...bp, exercises: updatedExercises };
+        }
+        // No duplicate: add as new exercise
         return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [{ weight: 0, reps: 0 }] }] };
       }),
     );
@@ -291,7 +304,22 @@ export function AddWorkoutScreen({ navigation }: any) {
   const addExercise = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setExercises((xs) => [...xs, { name: trimmed, sets: [{ weight: '', reps: '' }] }]);
+    setExercises((xs) => {
+      // Check if exercise with same name (case-insensitive) already exists
+      const existingIdx = xs.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
+      if (existingIdx >= 0) {
+        // Merge: add a blank set to the existing exercise
+        const updated = [...xs];
+        updated[existingIdx] = {
+          ...updated[existingIdx],
+          sets: [...updated[existingIdx].sets, { weight: '', reps: '' }],
+        };
+        showToast(`${trimmed} is already in this workout — added another set to it.`);
+        return updated;
+      }
+      // No duplicate: add as new exercise
+      return [...xs, { name: trimmed, sets: [{ weight: '', reps: '' }] }];
+    });
     setExName('');
     // If this is a custom exercise (not in presets), save it to the library
     if (bodyPart && !EXERCISE_LIBRARY[bodyPart]?.includes(trimmed)) {

@@ -11,6 +11,88 @@ const WORKOUTS_KEY = 'workouts.sessions.v1';
 const DIET_TARGETS_KEY = 'diet.targets.v1';
 const DIET_LOGS_KEY = 'diet.logs.v1';
 const CUSTOM_EXERCISES_KEY = 'exercises.custom.v1';
+const THEME_MODE_KEY = 'theme.mode';
+
+/* ------------------------------ Backup types --------------------------- */
+
+export interface BackupPayload {
+  exportVersion: 1;
+  exportedAt: string;
+  data: {
+    workouts: WorkoutSession[];
+    dietTargets: DietTargets;
+    dietLogs: DietLog[];
+    customExercises: Record<string, string[]>;
+    themeMode: 'light' | 'dark';
+  };
+}
+
+export async function exportAllData(): Promise<BackupPayload> {
+  const [workouts, dietTargets, dietLogs, customExercises, themeMode] = await Promise.all([
+    storageService.getItem<WorkoutSession[]>(WORKOUTS_KEY),
+    storageService.getItem<DietTargets>(DIET_TARGETS_KEY),
+    storageService.getItem<DietLog[]>(DIET_LOGS_KEY),
+    storageService.getItem<Record<string, string[]>>(CUSTOM_EXERCISES_KEY),
+    storageService.getItem<'light' | 'dark'>(THEME_MODE_KEY),
+  ]);
+
+  return {
+    exportVersion: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      workouts: workouts ?? [],
+      dietTargets: dietTargets ?? { protein: 0, carbs: 0, fats: 0, fiber: 0, isSetup: false },
+      dietLogs: dietLogs ?? [],
+      customExercises: customExercises ?? {},
+      themeMode: themeMode ?? 'light',
+    },
+  };
+}
+
+function validateBackupPayload(payload: unknown): asserts payload is BackupPayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('This does not look like a valid Gym Tracker backup file.');
+  }
+  const p = payload as { exportVersion?: unknown; data?: unknown };
+  if (p.exportVersion !== 1) {
+    throw new Error('Unrecognized backup version. This file cannot be imported.');
+  }
+  if (!p.data || typeof p.data !== 'object') {
+    throw new Error('Backup is missing data object.');
+  }
+  const d = p.data as Record<string, unknown>;
+  if (!Array.isArray(d.workouts)) {
+    throw new Error('Backup is missing workout data.');
+  }
+  if (!d.dietTargets || typeof d.dietTargets !== 'object') {
+    throw new Error('Backup is missing diet targets.');
+  }
+  if (!Array.isArray(d.dietLogs)) {
+    throw new Error('Backup is missing diet logs.');
+  }
+  if (!d.customExercises || typeof d.customExercises !== 'object') {
+    throw new Error('Backup is missing custom exercises.');
+  }
+  if (d.themeMode !== 'light' && d.themeMode !== 'dark') {
+    throw new Error('Backup is missing theme mode.');
+  }
+}
+
+export async function importAllData(payload: unknown): Promise<{ workouts: number; dietLogs: number }> {
+  validateBackupPayload(payload);
+
+  const { data } = payload;
+
+  await Promise.all([
+    storageService.setItem(WORKOUTS_KEY, data.workouts),
+    storageService.setItem(DIET_TARGETS_KEY, data.dietTargets),
+    storageService.setItem(DIET_LOGS_KEY, data.dietLogs),
+    storageService.setItem(CUSTOM_EXERCISES_KEY, data.customExercises),
+    storageService.setItem(THEME_MODE_KEY, data.themeMode),
+  ]);
+
+  return { workouts: data.workouts.length, dietLogs: data.dietLogs.length };
+}
 
 /* ------------------------------ helpers ------------------------------ */
 

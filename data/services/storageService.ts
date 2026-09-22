@@ -10,7 +10,8 @@ export const storageService = {
     try {
       const raw = await AsyncStorage.getItem(key);
       return raw == null ? null : (JSON.parse(raw) as T);
-    } catch {
+    } catch (e) {
+      console.warn(`[storageService] Failed to parse key "${key}":`, e);
       return null;
     }
   },

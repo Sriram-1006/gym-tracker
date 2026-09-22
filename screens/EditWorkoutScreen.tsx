@@ -71,10 +71,11 @@ export function EditWorkoutScreen({ navigation, route }: any) {
 
   // Confirmation dialogs for deletions and save changes
   const [confirmDelete, setConfirmDelete] = useState<{
-    type: 'set' | 'exercise' | 'bodyPart';
+    type: 'set' | 'exercise' | 'bodyPart' | 'saveChanges';
     bodyPartName?: string;
     exerciseIndex?: number;
     setIndex?: number;
+    message?: string;
     onConfirm: () => void;
   } | null>(null);
 
@@ -155,6 +156,19 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     setDraft((d) =>
       d.map((bp) => {
         if (bp.bodyPart !== bpName) return bp;
+        // Check if exercise with same name (case-insensitive) already exists in this body part
+        const existingIdx = bp.exercises.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
+        if (existingIdx >= 0) {
+          // Merge: add a blank set to the existing exercise
+          const updatedExercises = [...bp.exercises];
+          updatedExercises[existingIdx] = {
+            ...updatedExercises[existingIdx],
+            sets: [...updatedExercises[existingIdx].sets, { weight: 0, reps: 0 }],
+          };
+          showToast(`${trimmed} is already in this workout — added another set to it.`);
+          return { ...bp, exercises: updatedExercises };
+        }
+        // No duplicate: add as new exercise
         return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [{ weight: 0, reps: 0 }] }] };
       }),
     );
@@ -213,7 +227,10 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     setDraft((d) => {
       const idx = d.findIndex((bp) => bp.bodyPart === part);
       if (idx >= 0) {
-        return [...d.slice(0, idx), entry, ...d.slice(idx + 1)];
+        const existing = d[idx];
+        const mergedExercises = [...existing.exercises, ...cleaned];
+        const mergedEntry: BodyPartInput = { bodyPart: part, exercises: mergedExercises };
+        return [...d.slice(0, idx), mergedEntry, ...d.slice(idx + 1)];
       }
       return [...d, entry];
     });
@@ -238,9 +255,12 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     const totalExercises = finalDraft.reduce((a, bp) => a + bp.exercises.length, 0);
     const totalSets = finalDraft.reduce((a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0), 0);
 
+    // Precompute the confirmation message from finalDraft (not draft) to avoid batching dependency
+    const confirmMessage = `This will update the workout to ${totalExercises} exercise(s) and ${totalSets} set(s).`;
+
     setConfirmDelete({
-      type: 'bodyPart', // reuse type for confirmation
-      bodyPartName: 'Save Changes',
+      type: 'saveChanges',
+      message: confirmMessage,
       onConfirm: async () => {
         const dateToUse = date ?? todayISO();
 
@@ -266,7 +286,22 @@ export function EditWorkoutScreen({ navigation, route }: any) {
   const addExercise = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setExercises((xs) => [...xs, { name: trimmed, sets: [{ weight: '', reps: '' }] }]);
+    setExercises((xs) => {
+      // Check if exercise with same name (case-insensitive) already exists
+      const existingIdx = xs.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
+      if (existingIdx >= 0) {
+        // Merge: add a blank set to the existing exercise
+        const updated = [...xs];
+        updated[existingIdx] = {
+          ...updated[existingIdx],
+          sets: [...updated[existingIdx].sets, { weight: '', reps: '' }],
+        };
+        showToast(`${trimmed} is already in this workout — added another set to it.`);
+        return updated;
+      }
+      // No duplicate: add as new exercise
+      return [...xs, { name: trimmed, sets: [{ weight: '', reps: '' }] }];
+    });
     setExName('');
     // If this is a custom exercise (not in presets), save it to the library
     if (bodyPart && !EXERCISE_LIBRARY[bodyPart]?.includes(trimmed)) {
@@ -740,7 +775,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             ? 'Delete this set?'
             : confirmDelete?.type === 'exercise'
             ? 'Delete this exercise?'
-            : confirmDelete?.bodyPartName === 'Save Changes'
+            : confirmDelete?.type === 'saveChanges'
             ? 'Save changes to this workout?'
             : 'Delete this body part?'
         }
@@ -749,13 +784,13 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             ? 'This will remove the set from the exercise.'
             : confirmDelete?.type === 'exercise'
             ? 'This will remove the exercise and all its sets.'
-            : confirmDelete?.bodyPartName === 'Save Changes'
-            ? `This will update the workout to ${draft.reduce((a, bp) => a + bp.exercises.length, 0)} exercise(s) and ${draft.reduce((a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0), 0)} set(s).`
+            : confirmDelete?.type === 'saveChanges'
+            ? confirmDelete.message
             : 'This will remove the body part and all its exercises and sets.'
         }
-        confirmLabel={confirmDelete?.bodyPartName === 'Save Changes' ? 'Save' : 'Delete'}
+        confirmLabel={confirmDelete?.type === 'saveChanges' ? 'Save' : 'Delete'}
         cancelLabel="Cancel"
-        destructive={confirmDelete?.bodyPartName !== 'Save Changes'}
+        destructive={confirmDelete?.type !== 'saveChanges'}
         onConfirm={() => {
           confirmDelete?.onConfirm();
           setConfirmDelete(null);

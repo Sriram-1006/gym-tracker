@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View, Platform, BackHandler } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TextInput, View, Platform, BackHandler } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '../theme/ThemeContext';
@@ -25,13 +25,16 @@ export function BodyPartPickerModal({
   const { colors, spacing, fontSize, radius, touchTarget } = theme;
 
   const [selectedBodyPart, setSelectedBodyPart] = useState<string | null>(null);
+  const [customBodyPart, setCustomBodyPart] = useState('');
 
   // Reset selection when modal opens/closes
   useEffect(() => {
     if (visible) {
       setSelectedBodyPart(currentBodyPart);
+      setCustomBodyPart('');
     } else {
       setSelectedBodyPart(null);
+      setCustomBodyPart('');
     }
   }, [visible, currentBodyPart]);
 
@@ -47,10 +50,23 @@ export function BodyPartPickerModal({
 
   const handleChipPress = (bodyPart: string) => {
     setSelectedBodyPart((prev) => (prev === bodyPart ? null : bodyPart));
+    // Clear custom text when a chip is selected (mutual exclusion)
+    setCustomBodyPart('');
+  };
+
+  const handleCustomTextChange = (text: string) => {
+    setCustomBodyPart(text);
+    // Clear chip selection when typing custom text (mutual exclusion)
+    if (text.trim()) {
+      setSelectedBodyPart(null);
+    }
   };
 
   const handleAddPress = () => {
-    if (selectedBodyPart) {
+    const customTrimmed = customBodyPart.trim();
+    if (customTrimmed) {
+      onConfirm(customTrimmed);
+    } else if (selectedBodyPart) {
       onConfirm(selectedBodyPart);
     }
   };
@@ -64,6 +80,8 @@ export function BodyPartPickerModal({
   };
 
   const bodyParts = Object.keys(EXERCISE_LIBRARY);
+
+  const hasValidSelection = customBodyPart.trim() !== '' || selectedBodyPart !== null;
 
   if (!visible) return null;
 
@@ -107,6 +125,24 @@ export function BodyPartPickerModal({
               );
             })}
           </View>
+          <TextInput
+            value={customBodyPart}
+            onChangeText={handleCustomTextChange}
+            placeholder="…or type a custom body part"
+            placeholderTextColor={colors.textMuted}
+            style={{
+              marginBottom: spacing.m,
+              minHeight: touchTarget,
+              borderRadius: radius,
+              backgroundColor: colors.surfaceAlt,
+              color: colors.text,
+              paddingHorizontal: spacing.m,
+              fontSize: fontSize.body,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: colors.border,
+            }}
+            autoCapitalize="words"
+          />
           <View style={{ flexDirection: 'row', gap: spacing.s, marginTop: spacing.m }}>
             <Button
               label="Exit"
@@ -118,13 +154,13 @@ export function BodyPartPickerModal({
               label="Add"
               variant="primary"
               onPress={handleAddPress}
-              disabled={!selectedBodyPart}
+              disabled={!hasValidSelection}
               style={{ flex: 1 }}
             />
           </View>
         </Pressable>
       </Pressable>
-      </Modal>
+    </Modal>
   );
 }
 

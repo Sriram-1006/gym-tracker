@@ -141,14 +141,24 @@ export function WorkoutHomeScreen({ navigation }: any) {
         <Text style={{ color: colors.text, fontSize: fontSize.header, fontWeight: '800' }}>
           Gym Tracker
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle dark or light theme"
-          onPress={toggleMode}
-          style={styles.iconButton}
-        >
-          <Ionicons name={theme.mode === 'dark' ? 'sunny' : 'moon'} size={20} color={colors.accent} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            onPress={() => navigation.navigate('Settings')}
+            style={styles.iconButton}
+          >
+            <Ionicons name="settings-outline" size={20} color={colors.accent} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle dark or light theme"
+            onPress={toggleMode}
+            style={styles.iconButton}
+          >
+            <Ionicons name={theme.mode === 'dark' ? 'sunny' : 'moon'} size={20} color={colors.accent} />
+          </Pressable>
+        </View>
       </View>
 
       <FlatList
@@ -280,6 +290,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   sectionTitleRow: {
     flexDirection: 'row',
