@@ -44,7 +44,7 @@ npm run test:watch  # same suite in watch mode
 
 Your workout-in-progress is **separate from completed history** and is **saved automatically** as you type:
 
-- Every change — date, body part, exercise, sets, weights, reps — is written to storage. Typing is debounced by a fraction of a second; structural changes and leaving the screen are written immediately.
+- Every change — date, body part, exercise, sets, weights, reps — is written to storage. Typing is debounced (~400 ms); structural changes and leaving the screen are written immediately (including the Android hardware back button, which flushes the draft first).
 - Pressing **Back** keeps the workout as the **Current workout** — it is never discarded and never becomes a completed session by accident.
 - The **Workout** home screen shows a highlighted **Current workout** card above *Previous workouts* whenever a draft exists, with a **Resume workout** button.
 - There is **at most one** current workout. If one already exists, the home CTA becomes **“Resume current workout”** and opening it resumes the same draft instead of starting another.
@@ -54,18 +54,20 @@ Your workout-in-progress is **separate from completed history** and is **saved a
 ### Logging a workout
 
 1. Tap **“+ Add workout”** (or **“Resume current workout”** to continue an existing one).
-2. Pick a **body part** from the presets (Chest, Back, Legs, Shoulders, Biceps, Triceps, Core) **or type any custom name**.
-3. Add **exercises** — pick a preset for that body part or type any custom name. You can add several before moving on.
-4. Add **sets** with a weight (kg) and reps. New sets start **blank** and stay blank until you type — an empty field is never forced to `0`.
-5. Tap **“Add another body part”** to add more. The body part you were working on is committed to the saved draft **before** the picker opens, so nothing can be lost (this was a fixed bug).
+2. Pick a **body part** from the presets (Chest, Back, Legs, Shoulders, Biceps, Triceps, Core) **or type any custom name**. Picking one already in the session auto-expands it and shows a toast instead of duplicating it.
+3. Add **exercises** — pick a preset for that body part or type any custom name. Custom names are **saved to your exercise library** (deduplicated, per body part) and reappear in the picker next time. Adding an exercise whose name already exists in the body part **adds another set to it** (with a toast) instead of creating a duplicate. You can add several before moving on.
+4. Add **sets** with a weight (kg) and reps. New sets start **blank** and stay blank until you type — an empty field is never forced to `0`. A comma decimal (`1,5`) is accepted as `1.5`.
+5. Tap **“Add another body part”** to add more. The body part you were working on is committed to the saved draft **before** the picker opens, so nothing can be lost; dismissing the picker rolls the commit back via a snapshot (this was a fixed bug).
 6. Tap **“Finish workout”** to finalise. The whole session is saved as **one completed workout**, the current draft is cleared, and you land back on the Workout screen.
+
+Removing a **set, exercise or body part** inside the editor always asks for confirmation first, explaining exactly what will be removed.
 
 There is deliberately **no separate “Save” button**: auto-save preserves progress, **Back** leaves it as current, and **Finish** completes it.
 
 ### Date selection
 
 - The workout date defaults to today and can be changed from the Add/Edit screens.
-- **Future dates are not selectable.**
+- **Future dates are not selectable**, and the earliest selectable date is **1 Jan 2020**.
 - Dates are displayed consistently everywhere as e.g. `Fri 11 Sep 2026` (see *Date handling* below).
 - The stored format is always `YYYY-MM-DD`.
 
@@ -88,7 +90,7 @@ Tap the button again (“Unmark today as rest”) to undo a rest day.
 
 ### Browsing & editing past workouts
 
-The **Previous workouts** list (newest first) shows each session's date, body parts and total sets. Tap any entry to open a **read-only** detail view with every exercise and set.
+The **Previous workouts** list (newest first) shows each session's date, body parts, total sets and per-session volume (`· N vol`). Rest-day entries show a moon icon and “Rest day · marked as rest”. Tap any entry to open a **read-only** detail view with every exercise and set (detail header also shows total sets + volume).
 
 From the detail view you can:
 
@@ -97,13 +99,18 @@ From the detail view you can:
 
 Editing is a **separate flow** from the current-workout flow: Home → workout → Detail → Edit → Save changes. Editing one body part never removes the others.
 
+Editor notes:
+
+- **“Save changes”** asks for a confirmation showing the final exercise and set counts before writing.
+- **“Duplicate last set”** is available in the **Edit** screen's active-entry area (it copies the previous set's values forward).
+
 ---
 
 ## The Diet tab
 
 ### First-time setup (one time only)
 
-Tap **“Add diet”**, enter daily gram targets for **Protein, Carbs, Fats and Fiber**, and save. Afterwards an **“Edit”** button replaces “Add diet” so you can change targets anytime.
+Tap **“Add diet”**, enter daily gram targets for **Protein, Carbs, Fats and Fiber**, and save. The form is **prefilled with default targets of 140 / 250 / 70 / 30 g** (protein / carbs / fats / fiber) — edit them before saving if you like. Afterwards an **“Edit”** button replaces “Add diet” so you can change targets anytime.
 
 ### Today’s intake
 
@@ -115,15 +122,24 @@ Below today's intake, the **Diet history** section lists **previous days** (newe
 
 ### Midnight rollover
 
-If the app stays open past midnight, the “today” log automatically re-points to the new day (checked when the app returns to the foreground and on a light once-a-minute check) — yesterday's entry is preserved in history and storage.
+If the app stays open past midnight, the “today” log automatically re-points to the new day (checked when the app returns to the foreground and on a light every-30-seconds check) — yesterday's entry is preserved in history and storage.
 
 ---
 
 ## Light & dark theme
 
-Tap the **moon/sun icon** in the Workout header to switch themes. Every screen follows the active theme, and the choice is remembered.
+Tap the **moon/sun icon** in the Workout header to switch themes. Every screen follows the active theme (including the status bar and tab bar), and the choice is remembered across restarts.
 
 All icons come from **Ionicons** (`@expo/vector-icons`).
+
+---
+
+## Feedback & accessibility
+
+- **Toasts** confirm actions across the app (e.g. “Workout saved”, “Workout updated”, “Workout deleted”, “Today marked as rest”, “Rest day unmarked”, duplicate exercise/body-part notices, “Backup downloaded” / “Backup shared”, “Imported N workouts and M diet logs”, and error messages). They appear above the tab bar and work on every platform (unlike native `Alert`).
+- **Confirmations** use a themed in-app dialog (not `Alert.alert`, which is a no-op on web) for delete, rest-day, import, save-changes and editor removals.
+- **Hydration gate** — on launch the app shows a spinner until the theme, workouts, diet, exercise library and current draft are all loaded from storage, so you never see a flash of empty UI.
+- **Touch targets** are at least **44 px**, and interactive elements carry `accessibilityRole` / `accessibilityLabel` throughout.
 
 ---
 
@@ -131,8 +147,8 @@ All icons come from **Ionicons** (`@expo/vector-icons`).
 
 Open **Settings** from the gear icon on the Workout screen. The header is a custom header (like the rest of the app) with a **Back** button that returns to the previous screen.
 
-- **Export data** writes a JSON backup of all workouts, diet logs, custom exercises and your theme preference.
-- **Import data** reads a JSON backup, **validates it deeply**, then asks for confirmation before replacing your data.
+- **Export data** writes a JSON backup of all workouts, diet logs, custom exercises and your theme preference. The file is named `gym-tracker-backup-YYYY-MM-DD.json`.
+- **Import data** reads a JSON backup, **validates it deeply**, then asks for confirmation before replacing your data. On success a toast reports how many workouts and diet logs were imported.
 
 ### Backup format
 
@@ -249,6 +265,13 @@ React Native (Expo SDK 54) · TypeScript · React Navigation (bottom tabs + nati
 
 ## Changelog
 
+### 1.1.1 — Documentation of new features & clarifications
+
+- **Documented** previously implemented but undocumented behaviour: custom exercise library persistence, duplicate exercise/body-part handling, body-part picker snapshot rollback, default diet targets (140/250/70/30 g), edit-save confirmation counts, editor-level delete confirmations, export filename format, date-picker minimum (2020-01-01), comma decimal input, per-session volume on history rows, hydration loading gate, Android hardware-back draft flush, toast inventory, and accessibility (44 px targets, accessibility roles/labels).
+- **Fixed** diet midnight rollover wording: the background check runs every **30 seconds** (previously documented as once-a-minute).
+- **Clarified** that **“Duplicate last set”** is available in the **Edit** workout flow.
+- **Version** fields in `package.json` and `app.json` bumped to **1.1.0** to match the released feature set.
+
 ### 1.1.0 — Current-workout autosave, diet history, stability
 
 - **Current workout.** An in-progress workout is auto-saved to its own storage key (`workouts.current.v1`), shown as a **Current workout** card on Home, and resumable. **Back** keeps it current; **Finish** converts it into a completed session. Only one current workout can exist. Current workouts are excluded from history, strength and streak until finished.
@@ -279,7 +302,7 @@ React Native (Expo SDK 54) · TypeScript · React Navigation (bottom tabs + nati
 
 ### 1.0.1 — Bug fixes & polish
 
-- New sets start blank; “Duplicate last set” opts into copying values forward.
+- New sets start blank; “Duplicate last set” (Edit screen) opts into copying values forward.
 - Added workout deletion with confirmation, recalculating graph and streak.
 - Strength formula moved behind the ⓘ explainer; emoji replaced with Ionicons.
 - Clearer rest-day flow; compact empty chart; improved light-theme contrast.
