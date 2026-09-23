@@ -1,21 +1,29 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BackHandler,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
-  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { useTheme } from '../theme/ThemeContext';
-import { useWorkoutStore, BodyPartInput } from '../stores/appStores';
-import { todayISO } from '../data/repositories';
+import { useCurrentDraftStore } from '../stores/appStores';
+import {
+  cleanDraftExercises,
+  commitActiveBodyPart,
+  createEmptyDraft,
+  formatDisplayDate,
+  hasMeaningfulDraftData,
+} from '../data/repositories';
+import { CurrentWorkoutDraft, DraftExercise, DraftSet } from '../data/models';
 import { Button, Card, SectionTitle, ConfirmDialog } from '../components/ui';
+import { DatePickerField } from '../components/DatePickerField';
 import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
@@ -23,51 +31,64 @@ import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
 
-/** Parse ISO date string (YYYY-MM-DD) as local date, not UTC. */
-function parseISODateLocal(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-type DraftSet = { weight: string; reps: string };
-
 /**
- * Add Workout screen.
+ * Add Workout screen — also the "Current workout" screen.
  *
- * Flow (spec): pick a body part → add one or more exercises under it →
- * for each exercise add one or more sets (weight + reps) → optionally repeat
- * for another body part → Save commits the whole session at once.
+ * The in-progress workout is a persisted CurrentWorkoutDraft (`workouts.current.v1`)
+ * that is autosaved continuously. Opening this screen resumes the existing draft
+ * if one exists, so there is never more than one current workout.
  *
- * Draft state is kept locally in this screen; nothing touches the store until
- * "Finish & save workout" is pressed, so backing out never corrupts data.
+ * - Every edit is autosaved (typing is debounced, structural edits are immediate).
+ * - Back flushes the latest state and leaves the workout as "current".
+ * - Finish is the only action that converts the draft into a completed session.
  */
 export function AddWorkoutScreen({ navigation }: any) {
   const theme = useTheme();
   const { colors, spacing, fontSize, radius, touchTarget } = theme;
   const insets = useSafeAreaInsets();
-  const addSession = useWorkoutStore((s) => s.addSession);
 
-  const [draft, setDraft] = useState<BodyPartInput[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [savedSessionId, setSavedSessionId] = useState<string | null>(null);
-
-  // Custom exercises from library store
   const customExercises = useExerciseLibraryStore((s) => s.custom);
   const addCustomExercise = useExerciseLibraryStore((s) => s.addCustomExercise);
 
-  // Which draft body parts are expanded for editing
-  const [expandedDraftParts, setExpandedDraftParts] = useState<Set<string>>(new Set());
+  const persistDraft = useCurrentDraftStore((s) => s.persistDraft);
+  const autoSaveDraft = useCurrentDraftStore((s) => s.autoSaveDraft);
+  const flushDraft = useCurrentDraftStore((s) => s.flushDraft);
+  const finishDraft = useCurrentDraftStore((s) => s.finishDraft);
 
-  // Current in-progress body part
-  const [bodyPart, setBodyPart] = useState<string | null>(null);
-  const [customPart, setCustomPart] = useState('');
+  // Resume the persisted draft when one exists; otherwise start a fresh one.
+  const [state, setState] = useState<CurrentWorkoutDraft>(() => {
+    const existing = useCurrentDraftStore.getState().draft;
+    return existing && hasMeaningfulDraftData(existing) ? existing : createEmptyDraft();
+  });
+
+  // Authoritative in-memory snapshot. All mutations go through `commitState`, so
+  // the ref never goes stale and flush/Finish always see the latest edit.
+  const stateRef = useRef(state);
+
+  const commitState = useCallback(
+    (next: CurrentWorkoutDraft, immediate = false) => {
+      const stamped = { ...next, updatedAt: Date.now() };
+      stateRef.current = stamped;
+      setState(stamped);
+      if (immediate) {
+        // Structural change / boundary: write now so leaving immediately is safe.
+        void persistDraft(stamped);
+      } else {
+        // Typing burst: UI updates now, storage shortly, flushed on navigation.
+        autoSaveDraft(stamped);
+      }
+    },
+    [persistDraft, autoSaveDraft],
+  );
+
+  /* ------------------------------ visual state ---------------------------- */
+
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedParts, setExpandedParts] = useState<Set<string>>(new Set());
   const [partPickerOpen, setPartPickerOpen] = useState(false);
-
-  // Body parts already in draft (for visual markers in picker)
-  const draftBodyParts = useMemo(() => new Set(draft.map((bp) => bp.bodyPart)), [draft]);
-
-  // Confirmation dialogs for deletions
+  const [exPickerOpen, setExPickerOpen] = useState(false);
+  const [exPickerForBodyPart, setExPickerForBodyPart] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{
     type: 'set' | 'exercise' | 'bodyPart';
     bodyPartName?: string;
@@ -76,19 +97,24 @@ export function AddWorkoutScreen({ navigation }: any) {
     onConfirm: () => void;
   } | null>(null);
 
-  // Current in-progress exercise
-  const [exercises, setExercises] = useState<{ name: string; sets: DraftSet[] }[]>([]);
-  const [exName, setExName] = useState('');
-  const [exPickerOpen, setExPickerOpen] = useState(false);
-  const [exPickerForBodyPart, setExPickerForBodyPart] = useState<string | null>(null);
+  /**
+   * Snapshot taken right before an "add body part" picker opens. If the picker
+   * is dismissed, the snapshot is restored — so the pre-picker commit (below)
+   * is safely undone and the active entry form looks untouched.
+   */
+  const pickerSnapshotRef = useRef<CurrentWorkoutDraft | null>(null);
 
-  // Workout date — defaults to current date if not explicitly changed
-  const [date, setDate] = useState<string>(() => todayISO());
-  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  /* -------------------------------- derived ------------------------------- */
 
-  const presetSetsFor = useMemo(
-    () => (part: string) => EXERCISE_LIBRARY[part] ?? [],
-    [],
+  const draft = state.bodyParts;
+  const bodyPart = state.activeBodyPart;
+  const exercises = state.activeExercises;
+  const exName = state.activeExerciseName;
+  const date = state.date;
+
+  const draftBodyParts = useMemo(
+    () => new Set(state.bodyParts.map((bp) => bp.bodyPart)),
+    [state.bodyParts],
   );
 
   const allExercisesFor = useMemo(
@@ -96,126 +122,211 @@ export function AddWorkoutScreen({ navigation }: any) {
     [customExercises],
   );
 
-  /** Open exercise picker for a specific body part (from expanded card or active entry). */
+  const isInitialScreen = exercises.length === 0 && draft.length === 0;
+  const showStep2 = bodyPart !== null;
+  const showFooter =
+    draft.length > 0 ||
+    (bodyPart !== null &&
+      exercises.some((e) => e.sets.some((s) => s.weight.trim() !== '' || s.reps.trim() !== '')));
+
+  /* ----------------------------- navigation ------------------------------- */
+
+  const handleBack = useCallback(() => {
+    // Explicitly flush the latest state before leaving; never rely on debounce.
+    void flushDraft();
+    navigation.goBack();
+  }, [flushDraft, navigation]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return; // BackHandler is a no-op on web
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
+
+  // Covers gesture/back-navigation paths too (and the unmount below covers any
+  // remaining case). Flushing an already-cleared draft is a harmless no-op.
+  useEffect(() => {
+    const unsubscribe = navigation?.addListener?.('beforeRemove', () => {
+      void flushDraft();
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [navigation, flushDraft]);
+
+  useEffect(() => () => void flushDraft(), [flushDraft]);
+
+  /* -------------------- active body part / exercise entry ----------------- */
+
   const openExercisePicker = (forBodyPart?: string) => {
-    if (forBodyPart) {
-      setExPickerForBodyPart(forBodyPart);
-    }
+    setExPickerForBodyPart(forBodyPart ?? null);
     setExPickerOpen(true);
   };
 
-  /** Add exercise directly to a draft body part (from expanded card). */
-  const addExerciseToDraftBodyPart = (bpName: string, name: string) => {
+  /** Blank sets start genuinely blank (never an unusable 0 kg / 0 reps field). */
+  const blankSet = (): DraftSet => ({ weight: '', reps: '' });
+
+  const addExercise = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setDraft((d) =>
-      d.map((bp) => {
-        if (bp.bodyPart !== bpName) return bp;
-        // Check if exercise with same name (case-insensitive) already exists in this body part
-        const existingIdx = bp.exercises.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
-        if (existingIdx >= 0) {
-          // Merge: add a blank set to the existing exercise
-          const updatedExercises = [...bp.exercises];
-          updatedExercises[existingIdx] = {
-            ...updatedExercises[existingIdx],
-            sets: [...updatedExercises[existingIdx].sets, { weight: 0, reps: 0 }],
-          };
-          showToast(`${trimmed} is already in this workout — added another set to it.`);
-          return { ...bp, exercises: updatedExercises };
-        }
-        // No duplicate: add as new exercise
-        return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [{ weight: 0, reps: 0 }] }] };
-      }),
+    const cur = stateRef.current;
+    const existingIdx = cur.activeExercises.findIndex(
+      (ex) => ex.name.toLowerCase() === trimmed.toLowerCase(),
     );
-    // If this is a custom exercise, save it to the library
-    if (!EXERCISE_LIBRARY[bpName]?.includes(trimmed)) {
-      addCustomExercise(bpName, trimmed);
-    }
-  };
-
-  const resetExerciseForm = () => {
-    setExName('');
-    setExercises([]);
-    setExPickerForBodyPart(null);
-  };
-
-  /** Open the shared body-part picker modal. */
-  const openBodyPartPicker = () => {
-    setPartPickerOpen(true);
-  };
-
-  /** Handle confirmation from the shared body-part picker. */
-  const handleBodyPartPickerConfirm = (selectedBodyPart: string) => {
-    const alreadyInDraft = draftBodyParts.has(selectedBodyPart);
-    if (alreadyInDraft) {
-      // Auto-expand the existing body part and show toast
-      setExpandedDraftParts((prev) => {
-        const next = new Set(prev);
-        next.clear();
-        next.add(selectedBodyPart);
-        return next;
-      });
-      showToast(`${selectedBodyPart} is already in this session — add more exercises to it below.`);
+    let activeExercises: DraftExercise[];
+    if (existingIdx >= 0) {
+      activeExercises = cur.activeExercises.map((ex, i) =>
+        i === existingIdx ? { ...ex, sets: [...ex.sets, blankSet()] } : ex,
+      );
+      showToast(`${trimmed} is already in this workout — added another set to it.`);
     } else {
-      // Set the new body part for exercise entry
-      setBodyPart(selectedBodyPart);
-      setCustomPart('');
-      resetExerciseForm();
+      activeExercises = [...cur.activeExercises, { name: trimmed, sets: [blankSet()] }];
     }
-    setPartPickerOpen(false);
+    commitState({ ...cur, activeExercises, activeExerciseName: '' }, true);
+    const part = cur.activeBodyPart;
+    if (part && !EXERCISE_LIBRARY[part]?.includes(trimmed)) addCustomExercise(part, trimmed);
   };
 
-  /** Handle dismissal of the shared body-part picker (Exit, backdrop, back button). */
-  const handleBodyPartPickerDismiss = () => {
-    setPartPickerOpen(false);
-  };
-
-  const startNewBodyPart = () => {
-    setBodyPart(null);
-    setCustomPart('');
-    resetExerciseForm();
-    openBodyPartPicker();
-  };
-
-  /** Toggle expansion of a draft body part in the summary list. */
-  const toggleDraftPartExpansion = (bodyPartName: string) => {
-    setExpandedDraftParts((prev) => {
-      const next = new Set(prev);
-      if (next.has(bodyPartName)) {
-        next.delete(bodyPartName);
-      } else {
-        // Accordion behavior: close others, open this one
-        next.clear();
-        next.add(bodyPartName);
-      }
-      return next;
+  const updateActiveSet = (exIdx: number, setIdx: number, patch: Partial<DraftSet>) => {
+    const cur = stateRef.current;
+    commitState({
+      ...cur,
+      activeExercises: cur.activeExercises.map((ex, i) =>
+        i === exIdx
+          ? { ...ex, sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, ...patch } : s)) }
+          : ex,
+      ),
     });
   };
 
-  /** Check if a draft body part is expanded. */
-  const isDraftPartExpanded = (bodyPartName: string) => expandedDraftParts.has(bodyPartName);
+  const addActiveSet = (exIdx: number) => {
+    const cur = stateRef.current;
+    commitState(
+      {
+        ...cur,
+        activeExercises: cur.activeExercises.map((ex, i) =>
+          i === exIdx ? { ...ex, sets: [...ex.sets, blankSet()] } : ex,
+        ),
+      },
+      true,
+    );
+  };
 
-  /* ----------------------------- deletion ops ---------------------------- */
+  const removeActiveSet = (exIdx: number, setIdx: number) => {
+    const cur = stateRef.current;
+    commitState(
+      {
+        ...cur,
+        activeExercises: cur.activeExercises.map((ex, i) =>
+          i === exIdx ? { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) } : ex,
+        ),
+      },
+      true,
+    );
+  };
+
+  const removeActiveExercise = (exIdx: number) => {
+    const cur = stateRef.current;
+    commitState({ ...cur, activeExercises: cur.activeExercises.filter((_, i) => i !== exIdx) }, true);
+  };
+
+  const setActiveExerciseName = (text: string) => {
+    commitState({ ...stateRef.current, activeExerciseName: text });
+  };
+
+  /* --------------------------- committed draft ops ------------------------ */
+
+  const addExerciseToDraftBodyPart = (bpName: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const cur = stateRef.current;
+    const bodyParts = cur.bodyParts.map((bp) => {
+      if (bp.bodyPart !== bpName) return bp;
+      const existingIdx = bp.exercises.findIndex(
+        (ex) => ex.name.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (existingIdx >= 0) {
+        showToast(`${trimmed} is already in this workout — added another set to it.`);
+        return {
+          ...bp,
+          exercises: bp.exercises.map((ex, i) =>
+            i === existingIdx ? { ...ex, sets: [...ex.sets, blankSet()] } : ex,
+          ),
+        };
+      }
+      return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [blankSet()] }] };
+    });
+    commitState({ ...cur, bodyParts }, true);
+    if (!EXERCISE_LIBRARY[bpName]?.includes(trimmed)) addCustomExercise(bpName, trimmed);
+  };
+
+  const handleAddSet = (bpName: string, exIdx: number) => {
+    const cur = stateRef.current;
+    commitState(
+      {
+        ...cur,
+        bodyParts: cur.bodyParts.map((bp) =>
+          bp.bodyPart !== bpName
+            ? bp
+            : {
+                ...bp,
+                exercises: bp.exercises.map((ex, i) =>
+                  i === exIdx ? { ...ex, sets: [...ex.sets, blankSet()] } : ex,
+                ),
+              },
+        ),
+      },
+      true,
+    );
+  };
+
+  const handleUpdateSet = (
+    bpName: string,
+    exIdx: number,
+    setIdx: number,
+    patch: Partial<DraftSet>,
+  ) => {
+    const cur = stateRef.current;
+    commitState({
+      ...cur,
+      bodyParts: cur.bodyParts.map((bp) =>
+        bp.bodyPart !== bpName
+          ? bp
+          : {
+              ...bp,
+              exercises: bp.exercises.map((ex, i) =>
+                i === exIdx
+                  ? { ...ex, sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, ...patch } : s)) }
+                  : ex,
+              ),
+            },
+      ),
+    });
+  };
 
   const confirmRemoveSet = (bpName: string, exIdx: number, setIdx: number) => {
     setConfirmDelete({
       type: 'set',
-      bodyPartName: bpName,
-      exerciseIndex: exIdx,
-      setIndex: setIdx,
       onConfirm: () => {
-        // Find the body part in draft and remove the set
-        setDraft((d) =>
-          d.map((bp) => {
-            if (bp.bodyPart !== bpName) return bp;
-            return {
-              ...bp,
-              exercises: bp.exercises.map((ex, i) => {
-                if (i !== exIdx) return ex;
-                return { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) };
-              }),
-            };
-          }),
+        const cur = stateRef.current;
+        commitState(
+          {
+            ...cur,
+            bodyParts: cur.bodyParts.map((bp) =>
+              bp.bodyPart !== bpName
+                ? bp
+                : {
+                    ...bp,
+                    exercises: bp.exercises.map((ex, i) =>
+                      i === exIdx ? { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) } : ex,
+                    ),
+                  },
+            ),
+          },
+          true,
         );
       },
     });
@@ -224,14 +335,18 @@ export function AddWorkoutScreen({ navigation }: any) {
   const confirmRemoveExercise = (bpName: string, exIdx: number) => {
     setConfirmDelete({
       type: 'exercise',
-      bodyPartName: bpName,
-      exerciseIndex: exIdx,
       onConfirm: () => {
-        setDraft((d) =>
-          d.map((bp) => {
-            if (bp.bodyPart !== bpName) return bp;
-            return { ...bp, exercises: bp.exercises.filter((_, i) => i !== exIdx) };
-          }),
+        const cur = stateRef.current;
+        commitState(
+          {
+            ...cur,
+            bodyParts: cur.bodyParts.map((bp) =>
+              bp.bodyPart !== bpName
+                ? bp
+                : { ...bp, exercises: bp.exercises.filter((_, i) => i !== exIdx) },
+            ),
+          },
+          true,
         );
       },
     });
@@ -240,10 +355,10 @@ export function AddWorkoutScreen({ navigation }: any) {
   const confirmRemoveBodyPart = (bpName: string) => {
     setConfirmDelete({
       type: 'bodyPart',
-      bodyPartName: bpName,
       onConfirm: () => {
-        setDraft((d) => d.filter((bp) => bp.bodyPart !== bpName));
-        setExpandedDraftParts((prev) => {
+        const cur = stateRef.current;
+        commitState({ ...cur, bodyParts: cur.bodyParts.filter((bp) => bp.bodyPart !== bpName) }, true);
+        setExpandedParts((prev) => {
           const next = new Set(prev);
           next.delete(bpName);
           return next;
@@ -252,168 +367,117 @@ export function AddWorkoutScreen({ navigation }: any) {
     });
   };
 
-  /** Validates and moves the in-progress body part into the draft.
-   *  Returns the committed entry (or null) so callers don't read stale state. */
-  const commitBodyPart = (): BodyPartInput | null => {
-    const part = bodyPart;
-    if (!part) {
-      setError('Choose a body part first.');
-      return null;
-    }
-    if (exercises.length === 0) {
-      setError('Add at least one exercise for this body part.');
-      return null;
-    }
-    const cleaned = exercises
-      .map((e) => ({
-        name: e.name.trim(),
-        sets: e.sets
-          .map((s) => ({ weight: Number(s.weight) || 0, reps: Number(s.reps) || 0 }))
-          .filter((s) => s.weight > 0 || s.reps > 0),
-      }))
-      .filter((e) => e.name && e.sets.length > 0);
-    if (cleaned.length === 0) {
-      setError('Each exercise needs at least one set with weight or reps.');
-      return null;
-    }
-    const entry: BodyPartInput = { bodyPart: part, exercises: cleaned };
-    setDraft((d) => {
-      const idx = d.findIndex((bp) => bp.bodyPart === part);
-      if (idx >= 0) {
-        // Merge exercises with existing body part instead of replacing
-        const existing = d[idx];
-        const mergedExercises = [...existing.exercises, ...cleaned];
-        const mergedEntry: BodyPartInput = { bodyPart: part, exercises: mergedExercises };
-        return [...d.slice(0, idx), mergedEntry, ...d.slice(idx + 1)];
+  const toggleDraftPartExpansion = (bpName: string) => {
+    setExpandedParts((prev) => {
+      const next = new Set(prev);
+      if (next.has(bpName)) {
+        next.delete(bpName);
+      } else {
+        next.clear();
+        next.add(bpName);
       }
-      return [...d, entry];
+      return next;
     });
-
-    // If this body part was already in draft, show a toast
-    const wasExisting = draft.some((bp) => bp.bodyPart === part);
-    if (wasExisting) {
-      showToast(`${part} already in workout — exercises added`);
-    }
-    setError(null);
-    startNewBodyPart();
-    return entry;
   };
 
-  /* ----------------------------- exercise ops ---------------------------- */
-
-  const addExercise = (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setExercises((xs) => {
-      // Check if exercise with same name (case-insensitive) already exists
-      const existingIdx = xs.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
-      if (existingIdx >= 0) {
-        // Merge: add a blank set to the existing exercise
-        const updated = [...xs];
-        updated[existingIdx] = {
-          ...updated[existingIdx],
-          sets: [...updated[existingIdx].sets, { weight: '', reps: '' }],
-        };
-        showToast(`${trimmed} is already in this workout — added another set to it.`);
-        return updated;
-      }
-      // No duplicate: add as new exercise
-      return [...xs, { name: trimmed, sets: [{ weight: '', reps: '' }] }];
-    });
-    setExName('');
-    // If this is a custom exercise (not in presets), save it to the library
-    if (bodyPart && !EXERCISE_LIBRARY[bodyPart]?.includes(trimmed)) {
-      addCustomExercise(bodyPart, trimmed);
-    }
-  };
-
-  const updateSet = (exIdx: number, setIdx: number, patch: Partial<DraftSet>) => {
-    setExercises((xs) =>
-      xs.map((x, i) =>
-        i === exIdx
-          ? { ...x, sets: x.sets.map((s, j) => (j === setIdx ? { ...s, ...patch } : s)) }
-          : x,
-      ),
-    );
-  };
+  /* ----------------------- add-another-body-part flow --------------------- */
 
   /**
-   * New sets always start blank — carrying the previous set's values forward
-   * happens only when the user explicitly taps "Duplicate last set".
+   * Single entry point for every "add body part" affordance.
+   *
+   * Order is deliberate (P0 fix): validate the active entry → incorporate it
+   * into the draft → PERSIST → then open the picker. The active form is cleared
+   * as part of the commit, so the same data can never be persisted twice, and a
+   * dismissed picker restores the snapshot so nothing feels lost.
    */
-  const addSet = (exIdx: number) => {
-    setExercises((xs) =>
-      xs.map((x, i) =>
-        i === exIdx ? { ...x, sets: [...x.sets, { weight: '', reps: '' }] } : x),
-    );
+  const beginAddBodyPart = () => {
+    const cur = stateRef.current;
+
+    if (cur.activeBodyPart && cur.activeExercises.length > 0) {
+      const cleaned = cleanDraftExercises(cur.activeExercises);
+      if (!cleaned.some((ex) => ex.sets.length > 0)) {
+        setError('Each exercise needs at least one set with weight or reps.');
+        return; // keep the entry visible; do not open the picker
+      }
+    }
+
+    pickerSnapshotRef.current = cur;
+    const committed = commitActiveBodyPart(cur);
+    setError(null);
+    commitState(committed, true);
+    setPartPickerOpen(true);
   };
 
-  const removeSet = (exIdx: number, setIdx: number) => {
-    setExercises((xs) =>
-      xs.map((x, i) =>
-        i === exIdx ? { ...x, sets: x.sets.filter((_, j) => j !== setIdx) } : x),
-    );
+  const handleBodyPartPickerConfirm = (selected: string) => {
+    const cur = stateRef.current;
+    pickerSnapshotRef.current = null;
+    const alreadyInDraft = cur.bodyParts.some((bp) => bp.bodyPart === selected);
+
+    if (alreadyInDraft) {
+      setExpandedParts(new Set([selected]));
+      showToast(`${selected} is already in this session — add more exercises to it below.`);
+      commitState(
+        { ...cur, activeBodyPart: null, activeExercises: [], activeExerciseName: '' },
+        true,
+      );
+    } else {
+      setExpandedParts(new Set());
+      commitState(
+        { ...cur, activeBodyPart: selected, activeExercises: [], activeExerciseName: '' },
+        true,
+      );
+    }
+    setPartPickerOpen(false);
   };
 
-  const removeExercise = (exIdx: number) => {
-    setExercises((xs) => xs.filter((_, i) => i !== exIdx));
+  const handleBodyPartPickerDismiss = () => {
+    const snapshot = pickerSnapshotRef.current;
+    pickerSnapshotRef.current = null;
+    setPartPickerOpen(false);
+    if (snapshot) commitState(snapshot, true); // undo the pre-picker commit
   };
 
-  /* ------------------------------- rendering ----------------------------- */
+  /* -------------------------------- finish -------------------------------- */
 
-  // Handler functions for the shared WorkoutDraftEditor component
-  const handleRemoveBodyPart = (bodyPartName: string) => {
-    confirmRemoveBodyPart(bodyPartName);
+  /** Finish = the only action that turns the draft into a completed session. */
+  const handleFinish = async () => {
+    const cur = stateRef.current;
+
+    if (cur.activeBodyPart && cur.activeExercises.length > 0) {
+      const cleaned = cleanDraftExercises(cur.activeExercises);
+      if (!cleaned.some((ex) => ex.sets.length > 0)) {
+        setError('Each exercise needs at least one set with weight or reps.');
+        return;
+      }
+    }
+
+    const finalDraft = commitActiveBodyPart(cur);
+    if (!hasMeaningfulDraftData(finalDraft)) {
+      setError('Add at least one exercise before finishing.');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const session = await finishDraft(finalDraft);
+      if (!session) {
+        setError('Add at least one complete set (weight or reps) before finishing.');
+        return;
+      }
+      showToast('Workout saved');
+      navigation.popToTop();
+    } catch (e) {
+      // finishDraft only clears the draft after the session is stored, so the
+      // workout is still here for a retry.
+      setError('Could not save your workout. Your current workout is safe — please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleRemoveExercise = (bodyPartName: string, exerciseIndex: number) => {
-    confirmRemoveExercise(bodyPartName, exerciseIndex);
-  };
+  /* ------------------------------- rendering ------------------------------ */
 
-  const handleRemoveSet = (bodyPartName: string, exerciseIndex: number, setIndex: number) => {
-    confirmRemoveSet(bodyPartName, exerciseIndex, setIndex);
-  };
-
-  const handleAddSet = (bodyPartName: string, exerciseIndex: number) => {
-    setDraft((d) =>
-      d.map((bp) => {
-        if (bp.bodyPart !== bodyPartName) return bp;
-        return {
-          ...bp,
-          exercises: bp.exercises.map((ex, i) => {
-            if (i !== exerciseIndex) return ex;
-            return { ...ex, sets: [...ex.sets, { weight: 0, reps: 0 }] };
-          }),
-        };
-      }),
-    );
-  };
-
-  const handleUpdateSet = (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: number; reps?: number }) => {
-    setDraft((d) =>
-      d.map((bp) => {
-        if (bp.bodyPart !== bodyPartName) return bp;
-        return {
-          ...bp,
-          exercises: bp.exercises.map((ex, i) => {
-            if (i !== exerciseIndex) return ex;
-            return {
-              ...ex,
-              sets: ex.sets.map((set, k) =>
-                k === setIndex ? { ...set, ...patch } : set
-              ),
-            };
-          }),
-        };
-      }),
-    );
-  };
-
-  const handleAddExercise = (bodyPartName: string, exerciseName: string) => {
-    addExerciseToDraftBodyPart(bodyPartName, exerciseName);
-  };
-
-  /** Render the active exercise entry area (for the current body part being added). */
   const renderActiveExerciseEntry = () => {
     if (!bodyPart) return null;
     return (
@@ -434,7 +498,7 @@ export function AddWorkoutScreen({ navigation }: any) {
               <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
                 {ex.name}
               </Text>
-              <Pressable accessibilityRole="button" onPress={() => removeExercise(i)} hitSlop={8}>
+              <Pressable accessibilityRole="button" onPress={() => removeActiveExercise(i)} hitSlop={8}>
                 <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
               </Pressable>
             </View>
@@ -449,7 +513,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 </Text>
                 <TextInput
                   value={s.weight}
-                  onChangeText={(t) => updateSet(i, j, { weight: t })}
+                  onChangeText={(t) => updateActiveSet(i, j, { weight: t })}
                   keyboardType="decimal-pad"
                   placeholder="kg"
                   placeholderTextColor={colors.textMuted}
@@ -457,7 +521,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 />
                 <TextInput
                   value={s.reps}
-                  onChangeText={(t) => updateSet(i, j, { reps: t })}
+                  onChangeText={(t) => updateActiveSet(i, j, { reps: t })}
                   keyboardType="number-pad"
                   placeholder="reps"
                   placeholderTextColor={colors.textMuted}
@@ -466,7 +530,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove set ${j + 1}`}
-                  onPress={() => removeSet(i, j)}
+                  onPress={() => removeActiveSet(i, j)}
                   hitSlop={8}
                   style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
                 >
@@ -480,7 +544,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 label="Add set"
                 variant="ghost"
                 size="sm"
-                onPress={() => addSet(i)}
+                onPress={() => addActiveSet(i)}
                 style={{ alignSelf: 'flex-start' }}
               />
             </View>
@@ -521,102 +585,31 @@ export function AddWorkoutScreen({ navigation }: any) {
     );
   };
 
-  /* Date selection handlers */
-
-  const showDatePicker = () => {
-    setDatePickerVisible(true);
-  };
-
-  const onDateConfirm = (selectedDate: string) => {
-    setDate(selectedDate);
-    setDatePickerVisible(false);
-  };
-
-  const onDateChange = (_event: any, selectedDate?: Date) => {
-    if (selectedDate) {
-      setDate(todayISO(selectedDate));
-    }
-    setDatePickerVisible(false);
-  };
-
-  const renderDatePicker = () => {
-    if (!datePickerVisible) return null;
-    return (
-      <DateTimePicker
-        value={parseISODateLocal(date)}
-        mode="date"
-        is24Hour={true}
-        display="default"
-        onChange={onDateChange}
-        minimumDate={new Date(2020, 0, 1)}
-        maximumDate={new Date()}
-      />
-    );
-  };
-
-  /** Whether we're in "Screen 1" (initial selection) vs "Screen 2+" (exercise entry) */
-  const isInitialScreen = exercises.length === 0 && draft.length === 0;
-
-  /** Whether Step 2 (exercises) should be visible — only after a body part is selected. */
-  const showStep2 = bodyPart !== null;
-
-  /** Whether footer actions should be visible — when there's something to act on. */
-  const showFooter = draft.length > 0 || (bodyPart !== null && exercises.length > 0 && exercises.some((e) => e.sets.some((s) => Number(s.weight) > 0 || Number(s.reps) > 0)));
-
-  /** Save the current session (create or update) and stay on screen. */
-  const handleSave = async () => {
-    const pending = bodyPart && exercises.length > 0 ? commitBodyPart() : null;
-    if (pending === null && bodyPart && exercises.length > 0) return; // validation error
-    const finalDraft = pending ? [...draft, pending] : draft;
-    if (finalDraft.length === 0) {
-      setError('Nothing to save yet — add at least one exercise.');
-      return;
-    }
-    setSaving(true);
-    try {
-      if (savedSessionId) {
-        await useWorkoutStore.getState().updateSession(savedSessionId, { bodyParts: finalDraft, date });
-        showToast('Workout saved');
-      } else {
-        const session = await addSession({ bodyParts: finalDraft, dateISO: date });
-        setSavedSessionId(session.id);
-        showToast('Workout saved');
-      }
-    } catch (e) {
-      showToast('Could not save workout — please try again');
-    } finally {
-      setSaving(false);
-    }
-    // Close picker if it was opened by commitBodyPart
-    setPartPickerOpen(false);
-  };
-
-  /** Finish the workout — save and navigate home. */
-  const handleFinish = async () => {
-    const pending = bodyPart && exercises.length > 0 ? commitBodyPart() : null;
-    if (pending === null && bodyPart && exercises.length > 0) return; // validation error
-    const finalDraft = pending ? [...draft, pending] : draft;
-    if (finalDraft.length === 0) {
-      setError('Nothing to save yet — add at least one exercise.');
-      return;
-    }
-    setSaving(true);
-    try {
-      if (savedSessionId) {
-        await useWorkoutStore.getState().updateSession(savedSessionId, { bodyParts: finalDraft, date });
-      } else {
-        await addSession({ bodyParts: finalDraft, dateISO: date });
-      }
-      showToast('Workout saved');
-      navigation.popToTop();
-    } catch (e) {
-      showToast('Could not save workout — please try again');
-    } finally {
-      setSaving(false);
-    }
-    // Close picker if it was opened by commitBodyPart
-    setPartPickerOpen(false);
-  };
+  const renderFooterActions = () =>
+    showFooter ? (
+      <Card>
+        <View style={{ gap: spacing.s }}>
+          <Button
+            label="Add another body part"
+            variant="secondary"
+            onPress={beginAddBodyPart}
+          />
+          <Button
+            label={saving ? 'Finishing…' : 'Finish workout'}
+            onPress={handleFinish}
+            disabled={saving}
+          />
+          <Text style={{ color: colors.textMuted, fontSize: fontSize.caption, textAlign: 'center' }}>
+            Progress is saved automatically — you can leave and resume anytime.
+          </Text>
+        </View>
+        {error ? (
+          <Text style={{ color: colors.destructive, marginTop: spacing.m, fontSize: fontSize.caption }}>
+            {error}
+          </Text>
+        ) : null}
+      </Card>
+    ) : null;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -633,13 +626,14 @@ export function AddWorkoutScreen({ navigation }: any) {
       >
         <Pressable
           accessibilityRole="button"
-          onPress={() => navigation.goBack()}
+          accessibilityLabel="Back"
+          onPress={handleBack}
           style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
         >
           <Text style={{ color: colors.accent, fontSize: 17 }}>‹ Back</Text>
         </Pressable>
         <Text style={{ color: colors.text, fontSize: fontSize.title, fontWeight: '800' }}>
-          Add workout
+          {isInitialScreen ? 'Add workout' : 'Current workout'}
         </Text>
         <View style={{ width: 44 }} />
       </View>
@@ -650,7 +644,7 @@ export function AddWorkoutScreen({ navigation }: any) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: spacing.s }}>
             {/* Body parts breadcrumb */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flex: 1, minWidth: 0 }}>
-              {draft.map((bp, i) => (
+              {draft.map((bp) => (
                 <Text key={bp.bodyPart} style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
                   {bp.bodyPart}
                 </Text>
@@ -665,11 +659,7 @@ export function AddWorkoutScreen({ navigation }: any) {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
               <Ionicons name="calendar-outline" size={18} color={colors.textMuted} />
               <Text style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
-                {parseISODateLocal(date).toLocaleDateString(undefined, {
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                })} {parseISODateLocal(date).getFullYear()}
+                {formatDisplayDate(date)}
               </Text>
             </View>
           </View>
@@ -689,29 +679,10 @@ export function AddWorkoutScreen({ navigation }: any) {
                 <Card style={{ marginBottom: spacing.m }}>
                   <View style={{ padding: spacing.s }}>
                     <SectionTitle>Workout date</SectionTitle>
-                    <Pressable
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        minHeight: touchTarget,
-                        borderRadius: radius,
-                        backgroundColor: colors.surfaceAlt,
-                        paddingHorizontal: spacing.m,
-                        borderWidth: StyleSheet.hairlineWidth,
-                        borderColor: colors.border,
-                      }}
-                      onPress={showDatePicker}
-                    >
-                      <Text style={{ color: colors.text }}>
-                        {parseISODateLocal(date).toLocaleDateString(undefined, {
-                          weekday: 'short',
-                          month: 'short',
-                          day: 'numeric',
-                        })} {parseISODateLocal(date).getFullYear()}
-                      </Text>
-                      <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
-                    </Pressable>
+                    <DatePickerField
+                      value={date}
+                      onChange={(iso) => commitState({ ...stateRef.current, date: iso }, true)}
+                    />
                   </View>
                 </Card>
 
@@ -720,7 +691,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 <Card>
                   <Pressable
                     accessibilityRole="button"
-                    onPress={openBodyPartPicker}
+                    onPress={beginAddBodyPart}
                     style={{
                       minHeight: touchTarget,
                       borderRadius: radius,
@@ -766,37 +737,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 )}
 
                 {/* Step 3 — footer actions (gated) */}
-                {showFooter && (
-                  <Card>
-                    <View style={{ gap: spacing.s }}>
-                      <Button
-                        label="Add another body part"
-                        variant="secondary"
-                        onPress={openBodyPartPicker}
-                      />
-                      <View style={{ flexDirection: 'row', gap: spacing.s }}>
-                        <Button
-                          label={saving ? 'Saving…' : 'Save'}
-                          variant="secondary"
-                          onPress={handleSave}
-                          disabled={saving}
-                          style={{ flex: 1 }}
-                        />
-                        <Button
-                          label={saving ? 'Saving…' : 'Finish'}
-                          onPress={handleFinish}
-                          disabled={saving}
-                          style={{ flex: 1 }}
-                        />
-                      </View>
-                    </View>
-                    {error ? (
-                      <Text style={{ color: colors.destructive, marginTop: spacing.m, fontSize: fontSize.caption }}>
-                        {error}
-                      </Text>
-                    ) : null}
-                  </Card>
-                )}
+                {renderFooterActions()}
               </>
             )}
 
@@ -806,14 +747,13 @@ export function AddWorkoutScreen({ navigation }: any) {
                 {/* Expandable/editable draft body parts */}
                 <WorkoutDraftEditor
                   draft={draft}
-                  expandedParts={expandedDraftParts}
+                  expandedParts={expandedParts}
                   onToggleExpansion={toggleDraftPartExpansion}
-                  onRemoveBodyPart={handleRemoveBodyPart}
-                  onRemoveExercise={handleRemoveExercise}
-                  onRemoveSet={handleRemoveSet}
+                  onRemoveBodyPart={confirmRemoveBodyPart}
+                  onRemoveExercise={confirmRemoveExercise}
+                  onRemoveSet={confirmRemoveSet}
                   onAddSet={handleAddSet}
                   onUpdateSet={handleUpdateSet}
-                  onAddExercise={handleAddExercise}
                   openExercisePicker={openExercisePicker}
                   colors={colors}
                   spacing={spacing}
@@ -835,37 +775,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 {renderActiveExerciseEntry()}
 
                 {/* Step 3 — footer actions (gated) */}
-                {showFooter && (
-                  <Card>
-                    <View style={{ gap: spacing.s }}>
-                      <Button
-                        label="Add another body part"
-                        variant="secondary"
-                        onPress={openBodyPartPicker}
-                      />
-                      <View style={{ flexDirection: 'row', gap: spacing.s }}>
-                        <Button
-                          label={saving ? 'Saving…' : 'Save'}
-                          variant="secondary"
-                          onPress={handleSave}
-                          disabled={saving}
-                          style={{ flex: 1 }}
-                        />
-                        <Button
-                          label={saving ? 'Saving…' : 'Finish'}
-                          onPress={handleFinish}
-                          disabled={saving}
-                          style={{ flex: 1 }}
-                        />
-                      </View>
-                    </View>
-                    {error ? (
-                      <Text style={{ color: colors.destructive, marginTop: spacing.m, fontSize: fontSize.caption }}>
-                        {error}
-                      </Text>
-                    ) : null}
-                  </Card>
-                )}
+                {renderFooterActions()}
               </>
             )}
           </View>
@@ -878,25 +788,43 @@ export function AddWorkoutScreen({ navigation }: any) {
         onClose={handleBodyPartPickerDismiss}
         onConfirm={handleBodyPartPickerConfirm}
         alreadyInDraft={draftBodyParts}
-        currentBodyPart={bodyPart}
+        currentBodyPart={null}
       />
 
       {/* Exercise picker modal (presets for the chosen body part + free text + custom) */}
-      <Modal visible={exPickerOpen} transparent animationType="fade" onRequestClose={() => { setExPickerOpen(false); setExPickerForBodyPart(null); }}>
-        <Pressable style={styles.backdrop} onPress={() => { setExPickerOpen(false); setExPickerForBodyPart(null); }}>
+      <Modal
+        visible={exPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setExPickerOpen(false);
+          setExPickerForBodyPart(null);
+        }}
+      >
+        <Pressable
+          style={styles.backdrop}
+          onPress={() => {
+            setExPickerOpen(false);
+            setExPickerForBodyPart(null);
+          }}
+        >
           <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.title, marginBottom: spacing.m }}>
               {(exPickerForBodyPart ?? bodyPart) ? `Exercises — ${exPickerForBodyPart ?? bodyPart}` : 'Pick a body part first'}
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s }}>
-              {((exPickerForBodyPart ?? bodyPart) ? allExercisesFor(exPickerForBodyPart ?? bodyPart!) : []).map((name) => (
+              {((exPickerForBodyPart ?? bodyPart)
+                ? allExercisesFor(exPickerForBodyPart ?? bodyPart!)
+                : []
+              ).map((name) => (
                 <Pressable
                   key={name}
                   accessibilityRole="button"
                   onPress={() => {
-                    setExName(name);
                     if (exPickerForBodyPart) {
                       addExerciseToDraftBodyPart(exPickerForBodyPart, name);
+                    } else {
+                      setActiveExerciseName(name);
                     }
                     setExPickerOpen(false);
                     setExPickerForBodyPart(null);
@@ -915,7 +843,7 @@ export function AddWorkoutScreen({ navigation }: any) {
             </View>
             <TextInput
               value={exName}
-              onChangeText={setExName}
+              onChangeText={setActiveExerciseName}
               placeholder="Custom exercise name…"
               placeholderTextColor={colors.textMuted}
               style={{
@@ -934,6 +862,8 @@ export function AddWorkoutScreen({ navigation }: any) {
               onPress={() => {
                 if (exPickerForBodyPart) {
                   addExerciseToDraftBodyPart(exPickerForBodyPart, exName);
+                } else {
+                  addExercise(exName);
                 }
                 setExPickerOpen(false);
                 setExPickerForBodyPart(null);
@@ -970,8 +900,6 @@ export function AddWorkoutScreen({ navigation }: any) {
         }}
         onCancel={() => setConfirmDelete(null)}
       />
-
-      {renderDatePicker()}
     </View>
   );
 }

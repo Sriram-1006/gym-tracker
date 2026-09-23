@@ -5,8 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkoutStore } from '../stores/appStores';
-import { computeSessionStrength } from '../data/repositories';
-import { Button, Card, ConfirmDialog, EmptyState, SectionTitle } from '../components/ui';
+import { computeSessionStrength, formatDisplayDate } from '../data/repositories';
+import { Card, ConfirmDialog, EmptyState, SectionTitle } from '../components/ui';
 import { showToast } from '../components/Toast';
 
 export function WorkoutDetailScreen({ route, navigation }: any) {
@@ -108,13 +108,13 @@ export function WorkoutDetailScreen({ route, navigation }: any) {
               color={session.restDay ? colors.accent : colors.textMuted}
             />
             <Text style={{ color: colors.text, fontSize: fontSize.header, fontWeight: '800' }}>
-              {session.restDay ? 'Rest day' : session.date}
+              {session.restDay ? 'Rest day' : formatDisplayDate(session.date)}
             </Text>
           </View>
           <Text style={{ color: colors.textMuted, marginTop: 2, fontSize: fontSize.caption }}>
             {session.restDay
-              ? `${session.date} · marked as rest`
-              : `${session.date} · ${totalSets} set${totalSets === 1 ? '' : 's'} · ${Math.round(
+              ? `${formatDisplayDate(session.date)} · marked as rest`
+              : `${formatDisplayDate(session.date)} · ${totalSets} set${totalSets === 1 ? '' : 's'} · ${Math.round(
                   computeSessionStrength(session),
                 )} volume`}
           </Text>

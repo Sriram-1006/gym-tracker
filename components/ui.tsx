@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  ActivityIndicator,
   Modal as RNModal,
   Pressable,
   PressableProps,
@@ -15,7 +14,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '../theme/ThemeContext';
-import type { Theme } from '../theme/theme';
 
 /* -------------------------------- Button -------------------------------- */
 
@@ -119,7 +117,7 @@ export function ProgressBar({
   color?: string;
   height?: number;
 }) {
-  const { colors, radius } = useTheme();
+  const { colors } = useTheme();
   const clamped = Math.max(0, Math.min(1, ratio));
   return (
     <View style={{ height, borderRadius: height / 2, backgroundColor: colors.progressTrack, overflow: 'hidden' }}>

@@ -2,12 +2,18 @@ import { create } from 'zustand';
 
 import {
   computeSessionStrength,
+  currentDraftRepository,
   dietRepository,
+  draftToBodyParts,
+  hasMeaningfulDraftData,
+  normalizeDietLogs,
+  selectHistoricalLogs,
   shiftISODate,
   todayISO,
   workoutRepository,
 } from '../data/repositories';
 import {
+  CurrentWorkoutDraft,
   DietLog,
   DietTargets,
   MacroKey,
@@ -20,6 +26,127 @@ export const DEFAULT_TARGETS: Omit<DietTargets, 'isSetup'> = {
   fats: 70,
   fiber: 30,
 };
+
+export interface BodyPartInput {
+  bodyPart: string;
+  exercises: { name: string; sets: { weight: number; reps: number }[] }[];
+}
+
+/* --------------------------- Current Draft State -------------------------- */
+
+/**
+ * Debounce window for high-frequency edits (typing a weight/reps/name). A
+ * navigation-away always calls `flushDraft()` first, so this delay can never
+ * lose the user's latest input — it only avoids a write per keystroke.
+ */
+const AUTOSAVE_DEBOUNCE_MS = 400;
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+interface CurrentDraftState {
+  draft: CurrentWorkoutDraft | null;
+  hydrated: boolean;
+  hydrate: () => Promise<void>;
+  /** True when a meaningful, resumable draft exists. */
+  hasDraft: () => boolean;
+  /** Immediate authoritative write (structural changes / navigation flush). */
+  persistDraft: (draft: CurrentWorkoutDraft) => Promise<boolean>;
+  /** Update memory now, persist shortly (for text input). Resolves no promise. */
+  autoSaveDraft: (draft: CurrentWorkoutDraft) => void;
+  /** Cancel any pending debounce and write the latest memory state now. */
+  flushDraft: () => Promise<boolean>;
+  /** Discard the persisted draft (only after a Finish has succeeded). */
+  clearDraft: () => Promise<void>;
+  /**
+   * Convert the draft into a completed WorkoutSession. The completed session is
+   * persisted FIRST; the current draft is cleared only after that succeeds, so
+   * a failed finish keeps the draft intact for a retry.
+   */
+  finishDraft: (draft: CurrentWorkoutDraft) => Promise<WorkoutSession | null>;
+}
+
+function cancelPendingAutoSave() {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+}
+
+/** Write a draft to storage (or clear it when nothing meaningful remains). */
+async function writeDraft(draft: CurrentWorkoutDraft | null): Promise<boolean> {
+  try {
+    if (draft && hasMeaningfulDraftData(draft)) {
+      await currentDraftRepository.save(draft);
+    } else {
+      await currentDraftRepository.clear();
+    }
+    return true;
+  } catch (e) {
+    console.warn('[currentDraftStore] Failed to persist current draft:', e);
+    return false;
+  }
+}
+
+export const useCurrentDraftStore = create<CurrentDraftState>((set, get) => ({
+  draft: null,
+  hydrated: false,
+
+  hydrate: async () => {
+    const saved = await currentDraftRepository.get();
+    set({ draft: saved && hasMeaningfulDraftData(saved) ? saved : null, hydrated: true });
+  },
+
+  hasDraft: () => hasMeaningfulDraftData(get().draft),
+
+  persistDraft: async (draft) => {
+    cancelPendingAutoSave();
+    set({ draft });
+    return writeDraft(draft);
+  },
+
+  autoSaveDraft: (draft) => {
+    // Reflect the edit in memory immediately (Home/Finish read this), then
+    // debounce the storage write for typing bursts.
+    set({ draft });
+    cancelPendingAutoSave();
+    autoSaveTimer = setTimeout(() => {
+      autoSaveTimer = null;
+      void writeDraft(draft);
+    }, AUTOSAVE_DEBOUNCE_MS);
+  },
+
+  flushDraft: async () => {
+    cancelPendingAutoSave();
+    return writeDraft(get().draft);
+  },
+
+  clearDraft: async () => {
+    cancelPendingAutoSave();
+    set({ draft: null });
+    try {
+      await currentDraftRepository.clear();
+    } catch (e) {
+      console.warn('[currentDraftStore] Failed to clear current draft:', e);
+    }
+  },
+
+  finishDraft: async (draft) => {
+    cancelPendingAutoSave();
+    if (!hasMeaningfulDraftData(draft)) return null;
+    const bodyParts = draftToBodyParts(draft);
+    if (bodyParts.length === 0) return null;
+
+    // 1. Persist the completed session FIRST. If this throws, the draft is left
+    //    untouched so the user can retry without losing anything.
+    const session = await useWorkoutStore.getState().addSession({
+      bodyParts,
+      dateISO: draft.date,
+    });
+
+    // 2. Only once the session is safely stored do we discard the draft.
+    await get().clearDraft();
+    return session;
+  },
+}));
 
 interface WorkoutState {
   sessions: WorkoutSession[];
@@ -41,20 +168,28 @@ interface WorkoutState {
   updateSession: (sessionId: string, updates: Partial<WorkoutSession>) => Promise<void>;
 }
 
-export interface BodyPartInput {
-  bodyPart: string;
-  exercises: { name: string; sets: { weight: number; reps: number }[] }[];
-}
-
 interface DietState {
   targets: DietTargets;
   todayLog: DietLog;
+  /** All stored logs, newest first, one entry per date. */
+  history: DietLog[];
   hydrated: boolean;
   hydrate: () => Promise<void>;
   setupTargets: (grams: Omit<DietTargets, 'isSetup'>) => Promise<void>;
   updateTargets: (grams: Omit<DietTargets, 'isSetup'>) => Promise<void>;
   addToLog: (grams: Partial<Record<MacroKey, number>>) => Promise<void>;
   resetTodayLog: () => Promise<void>;
+  /**
+   * Keep `todayLog` pointed at the real current day. Cheap no-op unless the
+   * calendar day has changed while the app stayed open (midnight rollover).
+   */
+  syncDay: () => Promise<void>;
+  /** Previous days only, newest first (today is excluded). */
+  getHistoricalLogs: () => DietLog[];
+  /** Every stored log (today included), newest first, one per date. */
+  getDietLogs: () => DietLog[];
+  /** The single log for a calendar date, or undefined if nothing is stored. */
+  getLogForDate: (date: string) => DietLog | undefined;
 }
 
 const emptyLog = (date: string): DietLog => ({
@@ -95,8 +230,10 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => ({
     const sessions = [session, ...get().sessions].sort(
       (a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt,
     );
-    set({ sessions });
+    // Persist first, then reflect in memory: a failed write must not leave a
+    // phantom session that would double up on a Finish retry.
     await workoutRepository.saveAll(sessions);
+    set({ sessions });
     return session;
   },
 
@@ -166,6 +303,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => ({
 export const useDietStore = create<DietState>((set, get) => ({
   targets: { protein: 0, carbs: 0, fats: 0, fiber: 0, isSetup: false },
   todayLog: emptyLog(todayISO()),
+  history: [],
   hydrated: false,
 
   hydrate: async () => {
@@ -174,8 +312,14 @@ export const useDietStore = create<DietState>((set, get) => ({
       dietRepository.getLogs(),
     ]);
     const today = todayISO();
-    const log = logs.find((l) => l.date === today);
-    set({ targets, todayLog: log ? { ...log } : emptyLog(today), hydrated: true });
+    const normalized = normalizeDietLogs(logs);
+    const log = normalized.find((l) => l.date === today);
+    set({
+      targets,
+      history: normalized,
+      todayLog: log ? { ...log } : emptyLog(today),
+      hydrated: true,
+    });
   },
 
   setupTargets: async (grams) => {
@@ -202,18 +346,34 @@ export const useDietStore = create<DietState>((set, get) => ({
           fiber: existing.fiber + (grams.fiber ?? 0),
         }
       : { ...emptyLog(today), ...grams };
-    const merged = [next, ...logs.filter((l) => l.date !== today)];
-    set({ todayLog: { ...next } });
+    const merged = normalizeDietLogs([next, ...logs.filter((l) => l.date !== today)]);
+    set({ todayLog: { ...next }, history: merged });
     await dietRepository.saveLogs(merged);
   },
 
   resetTodayLog: async () => {
     const today = todayISO();
     const logs = await dietRepository.getLogs();
-    const merged = [...logs.filter((l) => l.date !== today), emptyLog(today)];
-    set({ todayLog: emptyLog(today) });
+    const merged = normalizeDietLogs([...logs.filter((l) => l.date !== today), emptyLog(today)]);
+    set({ todayLog: emptyLog(today), history: merged });
     await dietRepository.saveLogs(merged);
   },
+
+  syncDay: async () => {
+    const today = todayISO();
+    if (get().todayLog.date === today) return;
+    // The calendar day changed while the app was open — re-point today at the
+    // new day. Yesterday's entry stays untouched in history/storage.
+    const normalized = normalizeDietLogs(await dietRepository.getLogs());
+    const log = normalized.find((l) => l.date === today);
+    set({ history: normalized, todayLog: log ? { ...log } : emptyLog(today) });
+  },
+
+  getHistoricalLogs: () => selectHistoricalLogs(get().history),
+  getDietLogs: () => get().history,
+  // `history` holds one normalized entry per date, so this cannot return
+  // duplicates even if storage ever contained them.
+  getLogForDate: (date) => get().history.find((l) => l.date === date),
 }));
 
 // Re-export shared helpers so screens import from a single module.

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useDietStore, DEFAULT_TARGETS } from '../stores/appStores';
+import { formatDisplayDateShort, selectHistoricalLogs } from '../data/repositories';
 import { Button, Card, EmptyState, ProgressBar, SectionTitle } from '../components/ui';
 import { MacroKey } from '../data/models';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +46,9 @@ export function DietScreen() {
   const setupTargets = useDietStore((s) => s.setupTargets);
   const addToLog = useDietStore((s) => s.addToLog);
   const resetTodayLog = useDietStore((s) => s.resetTodayLog);
+  const history = useDietStore((s) => s.history);
+  // Previous days only — today is shown by the dedicated intake UI above.
+  const historicalLogs = useMemo(() => selectHistoricalLogs(history), [history]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -304,6 +308,40 @@ export function DietScreen() {
                 />
               ) : null}
             </Card>
+
+            {/* History is read-only and visually secondary to today. */}
+            <SectionTitle>Diet history</SectionTitle>
+            {historicalLogs.length === 0 ? (
+              <Card>
+                <EmptyState message="No previous diet logs yet." />
+              </Card>
+            ) : (
+              historicalLogs.map((log) => (
+                <Card key={log.date} style={{ marginBottom: spacing.s }}>
+                  <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
+                    {formatDisplayDateShort(log.date)}
+                  </Text>
+                  {MACROS.map((m) => {
+                    const target = targets[m.key] || 0;
+                    const consumed = log[m.key] || 0;
+                    const pct = target > 0 ? Math.round((consumed / target) * 100) : 0;
+                    return (
+                      <View
+                        key={m.key}
+                        style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}
+                      >
+                        <Text style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
+                          {m.label}
+                        </Text>
+                        <Text style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
+                          {consumed} / {target}g{target > 0 ? ` · ${pct}%` : ''}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </Card>
+              ))
+            )}
           </>
         )}
       </ScrollView>

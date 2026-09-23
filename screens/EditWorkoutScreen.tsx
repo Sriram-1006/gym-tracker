@@ -7,15 +7,15 @@ import {
   Text,
   TextInput,
   View,
-  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { useTheme } from '../theme/ThemeContext';
-import { useWorkoutStore, BodyPartInput } from '../stores/appStores';
-import { todayISO } from '../data/repositories';
+import { useWorkoutStore } from '../stores/appStores';
+import { parseDraftNumber, todayISO } from '../data/repositories';
+import { BodyPartEntry, DraftBodyPart, DraftExercise, DraftSet } from '../data/models';
 import { Button, Card, SectionTitle, ConfirmDialog } from '../components/ui';
+import { DatePickerField } from '../components/DatePickerField';
 import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
@@ -23,13 +23,36 @@ import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
 
-/** Parse ISO date string (YYYY-MM-DD) as local date, not UTC. */
-function parseISODateLocal(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d);
+/**
+ * Completed sessions store numeric sets; the shared editor works with raw
+ * strings so partial input is never coerced to 0 while editing. These helpers
+ * convert at the load/save boundaries only.
+ */
+function toDraftBodyParts(bodyParts: BodyPartEntry[]): DraftBodyPart[] {
+  return bodyParts.map((bp) => ({
+    bodyPart: bp.bodyPart,
+    exercises: bp.exercises.map((ex) => ({
+      name: ex.name,
+      sets: ex.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
+    })),
+  }));
 }
 
-type DraftSet = { weight: string; reps: string };
+function toSessionBodyParts(bodyParts: DraftBodyPart[]): BodyPartEntry[] {
+  return bodyParts
+    .map((bp) => ({
+      bodyPart: bp.bodyPart.trim(),
+      exercises: bp.exercises
+        .map((ex) => ({
+          name: ex.name.trim(),
+          sets: ex.sets
+            .map((s) => ({ weight: parseDraftNumber(s.weight), reps: parseDraftNumber(s.reps) }))
+            .filter((s) => s.weight !== 0 || s.reps !== 0),
+        }))
+        .filter((ex) => ex.name && ex.sets.length > 0),
+    }))
+    .filter((bp) => bp.bodyPart && bp.exercises.length > 0);
+}
 
 /**
  * Edit Workout screen.
@@ -50,10 +73,8 @@ export function EditWorkoutScreen({ navigation, route }: any) {
   // Defensive initialization - don't return early before hooks
   const sessionBodyParts = session?.bodyParts ?? [];
 
-  const today = todayISO();
-
-  // Current editing state
-  const [draft, setDraft] = useState<BodyPartInput[]>(sessionBodyParts);
+  // Current editing state (string-valued sets; converted back on save)
+  const [draft, setDraft] = useState<DraftBodyPart[]>(() => toDraftBodyParts(sessionBodyParts));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +84,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
 
   // Editing exercise / set state
   const [bodyPart, setBodyPart] = useState<string | null>(null);
-  const [customPart, setCustomPart] = useState('');
+  const [, setCustomPart] = useState('');
   const [partPickerOpen, setPartPickerOpen] = useState(false);
 
   // Which draft body parts are expanded for editing
@@ -79,22 +100,13 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     onConfirm: () => void;
   } | null>(null);
 
-  const [exercises, setExercises] = useState<
-    { name: string; sets: DraftSet[] }[]
-  >([]);
+  const [exercises, setExercises] = useState<DraftExercise[]>([]);
 
   const [exName, setExName] = useState('');
   const [exPickerOpen, setExPickerOpen] = useState(false);
   const [exPickerForBodyPart, setExPickerForBodyPart] = useState<string | null>(null);
 
   const [date, setDate] = useState<string>(session?.date ?? todayISO());
-  const [datePickerVisible, setDatePickerVisible] = useState(false);
-
-  // Preset sets mapping
-  const presetSetsFor = useMemo(
-    () => (part: string) => EXERCISE_LIBRARY[part] ?? [],
-    [],
-  );
 
   const allExercisesFor = useMemo(
     () => (part: string) => [...(EXERCISE_LIBRARY[part] ?? []), ...(customExercises[part] ?? [])],
@@ -163,13 +175,13 @@ export function EditWorkoutScreen({ navigation, route }: any) {
           const updatedExercises = [...bp.exercises];
           updatedExercises[existingIdx] = {
             ...updatedExercises[existingIdx],
-            sets: [...updatedExercises[existingIdx].sets, { weight: 0, reps: 0 }],
+            sets: [...updatedExercises[existingIdx].sets, { weight: '', reps: '' }],
           };
           showToast(`${trimmed} is already in this workout — added another set to it.`);
           return { ...bp, exercises: updatedExercises };
         }
         // No duplicate: add as new exercise
-        return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [{ weight: 0, reps: 0 }] }] };
+        return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [{ weight: '', reps: '' }] }] };
       }),
     );
     // If this is a custom exercise, save it to the library
@@ -200,8 +212,11 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     });
   };
 
-  /** Validates and commits the in-progress body part into draft. */
-  const commitBodyPart = (): BodyPartInput | null => {
+  /**
+   * Validates and commits the in-progress body part into draft. (Kept as raw
+   * strings — numeric conversion happens once, in `toSessionBodyParts`.)
+   */
+  const commitBodyPart = (openPickerAfter = true): DraftBodyPart | null => {
     const part = bodyPart;
     if (!part) {
       setError('Choose a body part first.');
@@ -211,49 +226,59 @@ export function EditWorkoutScreen({ navigation, route }: any) {
       setError('Add at least one exercise for this body part.');
       return null;
     }
-    const cleaned = exercises
+    const cleaned: DraftExercise[] = exercises
       .map((e) => ({
         name: e.name.trim(),
-        sets: e.sets
-          .map((s) => ({ weight: Number(s.weight) || 0, reps: Number(s.reps) || 0 }))
-          .filter((s) => s.weight > 0 || s.reps > 0),
+        sets: e.sets.filter((s) => s.weight.trim() !== '' || s.reps.trim() !== ''),
       }))
       .filter((e) => e.name && e.sets.length > 0);
     if (cleaned.length === 0) {
       setError('Each exercise needs at least one set with weight or reps.');
       return null;
     }
-    const entry: BodyPartInput = { bodyPart: part, exercises: cleaned };
+    const entry: DraftBodyPart = { bodyPart: part, exercises: cleaned };
     setDraft((d) => {
       const idx = d.findIndex((bp) => bp.bodyPart === part);
       if (idx >= 0) {
         const existing = d[idx];
         const mergedExercises = [...existing.exercises, ...cleaned];
-        const mergedEntry: BodyPartInput = { bodyPart: part, exercises: mergedExercises };
-        return [...d.slice(0, idx), mergedEntry, ...d.slice(idx + 1)];
+        return [
+          ...d.slice(0, idx),
+          { bodyPart: part, exercises: mergedExercises },
+          ...d.slice(idx + 1),
+        ];
       }
       return [...d, entry];
     });
     setError(null);
-    startNewBodyPart();
+    if (openPickerAfter) {
+      startNewBodyPart();
+    } else {
+      setBodyPart(null);
+      setCustomPart('');
+      resetExerciseForm();
+    }
     return entry;
   };
 
   /** Save changes — update the existing workout and navigate back. */
   const saveChanges = async () => {
-    // Commit any remaining body part - capture return value to avoid stale state
-    const pending = bodyPart && exercises.length > 0 ? commitBodyPart() : null;
+    // Commit any remaining body part - capture return value to avoid stale state.
+    // (Don't reopen the picker here: we're about to save and leave.)
+    const pending = bodyPart && exercises.length > 0 ? commitBodyPart(false) : null;
     if (pending === null && bodyPart && exercises.length > 0) return; // validation error
     const finalDraft = pending ? [...draft, pending] : draft;
 
-    if (finalDraft.length === 0) {
+    // Convert to numeric completed-session body parts at the commit boundary.
+    const finalBodyParts = toSessionBodyParts(finalDraft);
+    if (finalBodyParts.length === 0) {
       setError('Nothing to save — add at least one exercise.');
       return;
     }
 
     // Count for confirmation dialog
-    const totalExercises = finalDraft.reduce((a, bp) => a + bp.exercises.length, 0);
-    const totalSets = finalDraft.reduce((a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0), 0);
+    const totalExercises = finalBodyParts.reduce((a, bp) => a + bp.exercises.length, 0);
+    const totalSets = finalBodyParts.reduce((a, bp) => a + bp.exercises.reduce((a, ex) => a + ex.sets.length, 0), 0);
 
     // Precompute the confirmation message from finalDraft (not draft) to avoid batching dependency
     const confirmMessage = `This will update the workout to ${totalExercises} exercise(s) and ${totalSets} set(s).`;
@@ -268,7 +293,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
         try {
           await updateSession(sessionId, {
             date: dateToUse,
-            bodyParts: finalDraft,
+            bodyParts: finalBodyParts,
           });
           showToast('Workout updated');
           navigation.goBack();
@@ -413,14 +438,14 @@ export function EditWorkoutScreen({ navigation, route }: any) {
           ...bp,
           exercises: bp.exercises.map((ex, i) => {
             if (i !== exerciseIndex) return ex;
-            return { ...ex, sets: [...ex.sets, { weight: 0, reps: 0 }] };
+            return { ...ex, sets: [...ex.sets, { weight: '', reps: '' }] };
           }),
         };
       }),
     );
   };
 
-  const handleUpdateSet = (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: number; reps?: number }) => {
+  const handleUpdateSet = (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: string; reps?: string }) => {
     setDraft((d) =>
       d.map((bp) => {
         if (bp.bodyPart !== bodyPartName) return bp;
@@ -437,43 +462,6 @@ export function EditWorkoutScreen({ navigation, route }: any) {
           }),
         };
       }),
-    );
-  };
-
-  const handleAddExercise = (bodyPartName: string, exerciseName: string) => {
-    addExerciseToDraftBodyPart(bodyPartName, exerciseName);
-  };
-
-  /* Date selection handlers */
-
-  const showDatePicker = () => {
-    setDatePickerVisible(true);
-  };
-
-  const onDateConfirm = (selectedDate: string) => {
-    setDate(selectedDate);
-    setDatePickerVisible(false);
-  };
-
-  const onDateChange = (_event: any, selectedDate?: Date) => {
-    if (selectedDate) {
-      setDate(todayISO(selectedDate));
-    }
-    setDatePickerVisible(false);
-  };
-
-  const renderDatePicker = () => {
-    if (!datePickerVisible) return null;
-    return (
-      <DateTimePicker
-        value={parseISODateLocal(date)}
-        mode="date"
-        is24Hour={true}
-        display="default"
-        onChange={onDateChange}
-        minimumDate={new Date(2020, 0, 1)}
-        maximumDate={new Date()}
-      />
     );
   };
 
@@ -512,33 +500,9 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             <Card style={{ marginBottom: spacing.m }}>
               <View style={{ padding: spacing.s }}>
                 <SectionTitle>Workout date</SectionTitle>
-                <Pressable
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    minHeight: touchTarget,
-                    borderRadius: radius,
-                    backgroundColor: colors.surfaceAlt,
-                    paddingHorizontal: spacing.m,
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: colors.border,
-                  }}
-                  onPress={showDatePicker}
-                >
-                  <Text style={{ color: colors.text }}>
-                    {parseISODateLocal(date).toLocaleDateString(undefined, {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                    })} {parseISODateLocal(date).getFullYear()}
-                  </Text>
-                  <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
-                </Pressable>
+                <DatePickerField value={date} onChange={setDate} />
               </View>
             </Card>
-
-            {renderDatePicker()}
 
             {/* Existing body parts from the workout — editable inline */}
             <WorkoutDraftEditor
@@ -550,7 +514,6 @@ export function EditWorkoutScreen({ navigation, route }: any) {
               onRemoveSet={handleRemoveSet}
               onAddSet={handleAddSet}
               onUpdateSet={handleUpdateSet}
-              onAddExercise={handleAddExercise}
               openExercisePicker={openExercisePicker}
               colors={colors}
               spacing={spacing}

@@ -20,7 +20,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 import { useWorkoutStore, useDietStore, BodyPartInput } from '../stores/appStores';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
-import { todayISO, shiftISODate, computeStreak, customExerciseRepository } from '../data/repositories';
+import { todayISO, shiftISODate, computeStreak } from '../data/repositories';
 import { WorkoutSession, DietLog } from '../data/models';
 
 /** Reset zustand modules to a pristine state and clear fake storage. */

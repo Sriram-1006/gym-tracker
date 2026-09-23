@@ -38,9 +38,9 @@ export function BodyPartPickerModal({
     }
   }, [visible, currentBodyPart]);
 
-  // Handle hardware back button on Android
+  // Handle hardware back button on Android (BackHandler is a no-op on web).
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || Platform.OS === 'web') return;
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
       onClose();
       return true;

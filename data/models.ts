@@ -61,3 +61,50 @@ export interface StreakInfo {
   /** True when the last workout/rest was today. */
   activeToday: boolean;
 }
+
+/**
+ * Draft set — weight/reps are kept as raw strings while the user is editing so
+ * that a field can stay genuinely blank or partially typed (e.g. "17.") without
+ * being coerced to 0. Conversion to numbers happens only at the commit boundary
+ * (see `draftToBodyParts`), so completed WorkoutSessions keep numeric values.
+ */
+export interface DraftSet {
+  weight: string;
+  reps: string;
+}
+
+/** An exercise inside an in-progress draft (string-valued sets). */
+export interface DraftExercise {
+  name: string;
+  sets: DraftSet[];
+}
+
+/** A body part inside an in-progress draft (string-valued sets). */
+export interface DraftBodyPart {
+  bodyPart: string;
+  exercises: DraftExercise[];
+}
+
+/**
+ * In-progress workout draft — persisted separately from completed sessions
+ * under `workouts.current.v1`. A draft is NOT a WorkoutSession: it never shows
+ * up in history, streak or strength analytics until it is finished.
+ *
+ * Only state required to resume the Add Workout screen exactly is persisted;
+ * purely visual state (open modals, transient text fields) is left out.
+ */
+export interface CurrentWorkoutDraft {
+  id: string;
+  /** ISO date (YYYY-MM-DD) this draft workout belongs to. */
+  date: string;
+  /** Body parts that have been committed to the draft. */
+  bodyParts: DraftBodyPart[];
+  /** Currently active body part being edited (not yet committed). */
+  activeBodyPart: string | null;
+  /** Exercises for the active body part (in progress, string-valued sets). */
+  activeExercises: DraftExercise[];
+  /** Name being typed for a new exercise. */
+  activeExerciseName: string;
+  /** Updated timestamp (ms) — useful for debugging/conflict checks. */
+  updatedAt: number;
+}

@@ -4,14 +4,45 @@ import {
   StrengthPoint,
   StreakInfo,
   WorkoutSession,
+  CurrentWorkoutDraft,
+  DraftSet,
+  DraftExercise,
+  DraftBodyPart,
 } from './models';
 import { storageService } from './services/storageService';
+import { createEmptyDraft } from './draft';
+import { isValidISODate, todayISO } from './dateUtils';
+
+// Re-export the pure draft/date helpers so screens/tests import from one module.
+export {
+  createEmptyDraft,
+  hasMeaningfulDraftData,
+  cleanDraftExercises,
+  mergeDraftExercises,
+  commitActiveBodyPart,
+  draftToBodyParts,
+  summarizeDraft,
+  parseDraftNumber,
+  hasSetData,
+} from './draft';
+export type { DraftSummary } from './draft';
+export {
+  todayISO,
+  parseISODateLocal,
+  isValidISODate,
+  formatDisplayDate,
+  formatDisplayDateShort,
+  isFutureISO,
+  normalizeDateInput,
+} from './dateUtils';
+export { MACRO_KEYS, dietLogHasData, normalizeDietLogs, selectHistoricalLogs } from './dietUtils';
 
 const WORKOUTS_KEY = 'workouts.sessions.v1';
 const DIET_TARGETS_KEY = 'diet.targets.v1';
 const DIET_LOGS_KEY = 'diet.logs.v1';
 const CUSTOM_EXERCISES_KEY = 'exercises.custom.v1';
 const THEME_MODE_KEY = 'theme.mode';
+const CURRENT_DRAFT_KEY = 'workouts.current.v1';
 
 /* ------------------------------ Backup types --------------------------- */
 
@@ -49,59 +80,228 @@ export async function exportAllData(): Promise<BackupPayload> {
   };
 }
 
-function validateBackupPayload(payload: unknown): asserts payload is BackupPayload {
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('This does not look like a valid Gym Tracker backup file.');
+/* --------------------------- backup validation ------------------------- */
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+function isNonNegativeNumber(v: unknown): v is number {
+  return isFiniteNumber(v) && v >= 0;
+}
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim() !== '';
+}
+function invalid(message: string): never {
+  throw new Error(message);
+}
+
+const MACRO_KEYS = ['protein', 'carbs', 'fats', 'fiber'] as const;
+
+/** Validates one workout session, down to every nested set. */
+function validateWorkout(value: unknown, index: number): void {
+  const label = `Workout ${index + 1}`;
+  if (!isPlainObject(value)) invalid(`${label} is malformed.`);
+  if (!isNonEmptyString(value.id)) invalid(`${label} is missing an id.`);
+  if (!isValidISODate(value.date)) invalid(`${label} has an invalid date.`);
+  if (typeof value.restDay !== 'boolean') invalid(`${label} is missing its rest-day flag.`);
+  if (!isNonNegativeNumber(value.createdAt)) invalid(`${label} has an invalid createdAt.`);
+  if (!Array.isArray(value.bodyParts)) invalid(`${label} has malformed body parts.`);
+
+  value.bodyParts.forEach((bp: unknown, j: number) => {
+    const bpLabel = `${label}, body part ${j + 1}`;
+    if (!isPlainObject(bp)) invalid(`${bpLabel} is malformed.`);
+    if (!isNonEmptyString(bp.bodyPart)) invalid(`${bpLabel} is missing a name.`);
+    if (!Array.isArray(bp.exercises)) invalid(`${bpLabel} has malformed exercises.`);
+
+    bp.exercises.forEach((ex: unknown, k: number) => {
+      const exLabel = `${bpLabel}, exercise ${k + 1}`;
+      if (!isPlainObject(ex)) invalid(`${exLabel} is malformed.`);
+      if (!isNonEmptyString(ex.name)) invalid(`${exLabel} is missing a name.`);
+      if (!Array.isArray(ex.sets)) invalid(`${exLabel} has malformed sets.`);
+
+      ex.sets.forEach((s: unknown, l: number) => {
+        const setLabel = `${exLabel}, set ${l + 1}`;
+        if (!isPlainObject(s)) invalid(`${setLabel} is malformed.`);
+        if (!isNonNegativeNumber(s.weight)) invalid(`${setLabel} has an invalid weight.`);
+        if (!isNonNegativeNumber(s.reps)) invalid(`${setLabel} has invalid reps.`);
+      });
+    });
+  });
+}
+
+function validateDietTargets(value: unknown): void {
+  if (!isPlainObject(value)) invalid('Backup is missing diet targets.');
+  for (const key of MACRO_KEYS) {
+    if (!isNonNegativeNumber(value[key])) invalid(`Diet target "${key}" is invalid.`);
   }
-  const p = payload as { exportVersion?: unknown; data?: unknown };
-  if (p.exportVersion !== 1) {
-    throw new Error('Unrecognized backup version. This file cannot be imported.');
-  }
-  if (!p.data || typeof p.data !== 'object') {
-    throw new Error('Backup is missing data object.');
-  }
-  const d = p.data as Record<string, unknown>;
-  if (!Array.isArray(d.workouts)) {
-    throw new Error('Backup is missing workout data.');
-  }
-  if (!d.dietTargets || typeof d.dietTargets !== 'object') {
-    throw new Error('Backup is missing diet targets.');
-  }
-  if (!Array.isArray(d.dietLogs)) {
-    throw new Error('Backup is missing diet logs.');
-  }
-  if (!d.customExercises || typeof d.customExercises !== 'object') {
-    throw new Error('Backup is missing custom exercises.');
-  }
-  if (d.themeMode !== 'light' && d.themeMode !== 'dark') {
-    throw new Error('Backup is missing theme mode.');
+  if (typeof value.isSetup !== 'boolean') invalid('Diet targets are missing their setup flag.');
+}
+
+function validateDietLogs(value: unknown): void {
+  if (!Array.isArray(value)) invalid('Backup is missing diet logs.');
+  value.forEach((log: unknown, i: number) => {
+    if (!isPlainObject(log)) invalid(`Diet log ${i + 1} is malformed.`);
+    if (!isValidISODate(log.date)) invalid(`Diet log ${i + 1} has an invalid date.`);
+    for (const key of MACRO_KEYS) {
+      if (!isNonNegativeNumber(log[key])) invalid(`Diet log ${i + 1} has an invalid "${key}" value.`);
+    }
+  });
+}
+
+function validateCustomExercises(value: unknown): void {
+  if (!isPlainObject(value)) invalid('Backup is missing custom exercises.');
+  for (const [bodyPart, exercises] of Object.entries(value)) {
+    if (!Array.isArray(exercises)) invalid(`Custom exercises for "${bodyPart}" must be a list.`);
+    if (!exercises.every((name) => typeof name === 'string')) {
+      invalid(`Custom exercises for "${bodyPart}" must be text names.`);
+    }
   }
 }
 
+/**
+ * Deep structural validation of a backup payload. Throws a user-readable
+ * error on the first problem found, before anything is written to storage.
+ */
+export function validateBackupPayload(payload: unknown): asserts payload is BackupPayload {
+  if (!isPlainObject(payload)) {
+    invalid('This does not look like a valid Gym Tracker backup file.');
+  }
+  if (payload.exportVersion !== 1) {
+    invalid('Unrecognized backup version. This file cannot be imported.');
+  }
+  if (typeof payload.exportedAt !== 'string' || Number.isNaN(Date.parse(payload.exportedAt))) {
+    invalid('Backup is missing a valid export timestamp.');
+  }
+  if (!isPlainObject(payload.data)) {
+    invalid('Backup is missing its data object.');
+  }
+  const d = payload.data;
+  if (!Array.isArray(d.workouts)) invalid('Backup is missing workout data.');
+  d.workouts.forEach((w, i) => validateWorkout(w, i));
+  validateDietTargets(d.dietTargets);
+  validateDietLogs(d.dietLogs);
+  validateCustomExercises(d.customExercises);
+  if (d.themeMode !== 'light' && d.themeMode !== 'dark') {
+    invalid('Backup is missing a valid theme mode.');
+  }
+}
+
+/**
+ * Replace all persisted data with a validated backup.
+ *
+ * Order matters for data safety:
+ *  1. validate deeply (throws before any write),
+ *  2. snapshot the current data,
+ *  3. write the replacement,
+ *  4. on failure, roll the snapshot back (best effort) so the app is never
+ *     left half-imported,
+ *  5. verify the writes landed before reporting success.
+ */
 export async function importAllData(payload: unknown): Promise<{ workouts: number; dietLogs: number }> {
   validateBackupPayload(payload);
-
   const { data } = payload;
 
-  await Promise.all([
-    storageService.setItem(WORKOUTS_KEY, data.workouts),
-    storageService.setItem(DIET_TARGETS_KEY, data.dietTargets),
-    storageService.setItem(DIET_LOGS_KEY, data.dietLogs),
-    storageService.setItem(CUSTOM_EXERCISES_KEY, data.customExercises),
-    storageService.setItem(THEME_MODE_KEY, data.themeMode),
-  ]);
+  const replacement: Array<[string, unknown]> = [
+    [WORKOUTS_KEY, data.workouts],
+    [DIET_TARGETS_KEY, data.dietTargets],
+    [DIET_LOGS_KEY, data.dietLogs],
+    [CUSTOM_EXERCISES_KEY, data.customExercises],
+    [THEME_MODE_KEY, data.themeMode],
+  ];
+
+  // Snapshot what is currently stored so a mid-write failure can be undone.
+  const previous: Array<[string, unknown | null]> = [];
+  for (const [key] of replacement) {
+    previous.push([key, await storageService.getItem<unknown>(key)]);
+  }
+
+  try {
+    for (const [key, value] of replacement) {
+      await storageService.setItem(key, value);
+    }
+  } catch (e) {
+    for (const [key, value] of previous) {
+      try {
+        if (value === null) await storageService.removeItem(key);
+        else await storageService.setItem(key, value);
+      } catch {
+        // Best effort — nothing more we can do on this platform.
+      }
+    }
+    throw new Error('Import failed while writing data. Your previous data was kept.');
+  }
+
+  // Verify every key round-trips before declaring success.
+  for (const [key, value] of replacement) {
+    const readBack = await storageService.getItem<unknown>(key);
+    if (JSON.stringify(readBack) !== JSON.stringify(value)) {
+      throw new Error('Import could not be verified. Your data may be unchanged — please try again.');
+    }
+  }
 
   return { workouts: data.workouts.length, dietLogs: data.dietLogs.length };
 }
 
-/* ------------------------------ helpers ------------------------------ */
+/* -------------------------- current draft repo ------------------------- */
 
-export function todayISO(d = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+/**
+ * Coerce a persisted set to the string representation the editor expects.
+ * Defensive migration so older numeric drafts (if any) can still be resumed.
+ */
+function normalizeDraftSet(set: Partial<DraftSet> | undefined): DraftSet {
+  const raw = set ?? {};
+  const weight = raw.weight;
+  const reps = raw.reps;
+  return {
+    weight: typeof weight === 'string' ? weight : weight == null ? '' : String(weight),
+    reps: typeof reps === 'string' ? reps : reps == null ? '' : String(reps),
+  };
 }
+
+function normalizeDraftExercise(ex: Partial<DraftExercise> | undefined): DraftExercise {
+  return {
+    name: typeof ex?.name === 'string' ? ex.name : '',
+    sets: (ex?.sets ?? []).map(normalizeDraftSet),
+  };
+}
+
+function normalizeDraftBodyPart(bp: Partial<DraftBodyPart> | undefined): DraftBodyPart {
+  return {
+    bodyPart: typeof bp?.bodyPart === 'string' ? bp.bodyPart : '',
+    exercises: (bp?.exercises ?? []).map(normalizeDraftExercise),
+  };
+}
+
+/**
+ * The single persisted slot for the in-progress workout. Because there is only
+ * one key, at most one current draft can ever exist — saving a new draft simply
+ * replaces the previous one.
+ */
+export const currentDraftRepository = {
+  async get(): Promise<CurrentWorkoutDraft | null> {
+    const raw = await storageService.getItem<Partial<CurrentWorkoutDraft>>(CURRENT_DRAFT_KEY);
+    if (!raw) return null;
+    return {
+      ...createEmptyDraft(),
+      ...raw,
+      bodyParts: (raw.bodyParts ?? []).map(normalizeDraftBodyPart),
+      activeExercises: (raw.activeExercises ?? []).map(normalizeDraftExercise),
+    } as CurrentWorkoutDraft;
+  },
+
+  async save(draft: CurrentWorkoutDraft): Promise<void> {
+    await storageService.setItem(CURRENT_DRAFT_KEY, { ...draft, updatedAt: Date.now() });
+  },
+
+  async clear(): Promise<void> {
+    await storageService.removeItem(CURRENT_DRAFT_KEY);
+  },
+};
+
+/* ------------------------------ helpers ------------------------------ */
 
 export function shiftISODate(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);

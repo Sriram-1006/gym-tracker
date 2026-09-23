@@ -4,5 +4,5 @@ dist/
 web-build/
 *.log
 .DS_Store
-log.txt 
+log.txt
 scripts/

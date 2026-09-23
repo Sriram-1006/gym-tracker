@@ -3,6 +3,7 @@ import { Text, View } from 'react-native';
 import { CartesianChart, Line, Area } from 'victory-native';
 import { matchFont, type SkFont } from '@shopify/react-native-skia';
 import { useTheme } from '../theme/ThemeContext';
+import { formatDisplayDate } from '../data/dateUtils';
 
 type ChartPoint = { date: string; score: number; index: number };
 
@@ -41,8 +42,8 @@ export function StrengthChart({ data, height = 180 }: { data: Point[]; height?: 
     return (
       <View style={{ height, justifyContent: 'center' }}>
         <Text style={{ color: colors.textMuted, fontSize: 13 }}>
-          First workout logged on {p.date} — score {Math.round(p.score)}. Log another
-          day to draw the curve.
+          First workout logged on {formatDisplayDate(p.date)} — score {Math.round(p.score)}. Log
+          another day to draw the curve.
         </Text>
       </View>
     );

@@ -2,30 +2,25 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Button, Card, SectionTitle } from './ui';
+import { Button, Card } from './ui';
 import { useTheme } from '../theme/ThemeContext';
-import { BodyPartInput } from '../stores/appStores';
+import { DraftSet } from '../data/models';
 
 export interface WorkoutDraftEditorProps {
-  draft: BodyPartInput[];
+  draft: { bodyPart: string; exercises: { name: string; sets: DraftSet[] }[] }[];
   expandedParts: Set<string>;
   onToggleExpansion: (bodyPartName: string) => void;
   onRemoveBodyPart: (bodyPartName: string) => void;
   onRemoveExercise: (bodyPartName: string, exerciseIndex: number) => void;
   onRemoveSet: (bodyPartName: string, exerciseIndex: number, setIndex: number) => void;
   onAddSet: (bodyPartName: string, exerciseIndex: number) => void;
-  onUpdateSet: (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: number; reps?: number }) => void;
-  onAddExercise: (bodyPartName: string, exerciseName: string) => void;
+  onUpdateSet: (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: string; reps?: string }) => void;
   openExercisePicker: (bodyPartName: string) => void;
   colors: ReturnType<typeof useTheme>['colors'];
   spacing: ReturnType<typeof useTheme>['spacing'];
   fontSize: ReturnType<typeof useTheme>['fontSize'];
   radius: number;
   touchTarget: number;
-}
-
-function formatSet(set: { weight: number; reps: number }) {
-  return `${set.weight}kg × ${set.reps}`;
 }
 
 function ExerciseItem({
@@ -40,20 +35,18 @@ function ExerciseItem({
   spacing,
   fontSize,
   radius,
-  touchTarget,
 }: {
   bpName: string;
-  ex: { name: string; sets: { weight: number; reps: number }[] };
+  ex: { name: string; sets: DraftSet[] };
   exIdx: number;
   onRemoveExercise: (bpName: string, exIdx: number) => void;
   onRemoveSet: (bpName: string, exIdx: number, setIdx: number) => void;
   onAddSet: (bpName: string, exIdx: number) => void;
-  onUpdateSet: (bpName: string, exIdx: number, setIdx: number, patch: { weight?: number; reps?: number }) => void;
+  onUpdateSet: (bpName: string, exIdx: number, setIdx: number, patch: { weight?: string; reps?: string }) => void;
   colors: ReturnType<typeof useTheme>['colors'];
   spacing: ReturnType<typeof useTheme>['spacing'];
   fontSize: ReturnType<typeof useTheme>['fontSize'];
   radius: number;
-  touchTarget: number;
 }) {
   return (
     <View
@@ -78,10 +71,9 @@ function ExerciseItem({
             Set {j + 1}
           </Text>
           <TextInput
-            value={String(s.weight)}
+            value={s.weight}
             onChangeText={(t: string) => {
-              const num = Number(t) || 0;
-              onUpdateSet(bpName, exIdx, j, { weight: num });
+              onUpdateSet(bpName, exIdx, j, { weight: t });
             }}
             keyboardType="decimal-pad"
             placeholder="kg"
@@ -92,10 +84,9 @@ function ExerciseItem({
             ]}
           />
           <TextInput
-            value={String(s.reps)}
+            value={s.reps}
             onChangeText={(t: string) => {
-              const num = Number(t) || 0;
-              onUpdateSet(bpName, exIdx, j, { reps: num });
+              onUpdateSet(bpName, exIdx, j, { reps: t });
             }}
             keyboardType="number-pad"
             placeholder="reps"
@@ -138,7 +129,6 @@ function ExpandedBodyPartCard({
   onRemoveSet,
   onAddSet,
   onUpdateSet,
-  onAddExercise,
   openExercisePicker,
   colors,
   spacing,
@@ -146,14 +136,13 @@ function ExpandedBodyPartCard({
   radius,
   touchTarget,
 }: {
-  bp: BodyPartInput;
+  bp: { bodyPart: string; exercises: { name: string; sets: DraftSet[] }[] };
   index: number;
   onRemoveBodyPart: (bodyPartName: string) => void;
   onRemoveExercise: (bodyPartName: string, exerciseIndex: number) => void;
   onRemoveSet: (bodyPartName: string, exerciseIndex: number, setIndex: number) => void;
   onAddSet: (bodyPartName: string, exerciseIndex: number) => void;
-  onUpdateSet: (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: number; reps?: number }) => void;
-  onAddExercise: (bodyPartName: string, exerciseName: string) => void;
+  onUpdateSet: (bodyPartName: string, exerciseIndex: number, setIndex: number, patch: { weight?: string; reps?: string }) => void;
   openExercisePicker: (bodyPartName: string) => void;
   colors: ReturnType<typeof useTheme>['colors'];
   spacing: ReturnType<typeof useTheme>['spacing'];
@@ -170,6 +159,7 @@ function ExpandedBodyPartCard({
           </Text>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel={`Remove ${bp.bodyPart}`}
             onPress={() => onRemoveBodyPart(bp.bodyPart)}
             hitSlop={8}
           >
@@ -191,7 +181,6 @@ function ExpandedBodyPartCard({
             spacing={spacing}
             fontSize={fontSize}
             radius={radius}
-            touchTarget={touchTarget}
           />
         ))}
 
@@ -233,7 +222,7 @@ function CollapsedBodyPartRow({
   spacing,
   fontSize,
 }: {
-  bp: BodyPartInput;
+  bp: { bodyPart: string; exercises: { name: string; sets: DraftSet[] }[] };
   index: number;
   onPress: () => void;
   colors: ReturnType<typeof useTheme>['colors'];
@@ -275,7 +264,6 @@ export function WorkoutDraftEditor({
   onRemoveSet,
   onAddSet,
   onUpdateSet,
-  onAddExercise,
   openExercisePicker,
   colors,
   spacing,
@@ -301,7 +289,6 @@ export function WorkoutDraftEditor({
             onRemoveSet={onRemoveSet}
             onAddSet={onAddSet}
             onUpdateSet={onUpdateSet}
-            onAddExercise={onAddExercise}
             openExercisePicker={openExercisePicker}
             colors={colors}
             spacing={spacing}

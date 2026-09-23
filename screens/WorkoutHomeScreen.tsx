@@ -5,11 +5,14 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useThemeStore } from '../theme/themeStore';
-import { useWorkoutStore } from '../stores/appStores';
+import { useWorkoutStore, useCurrentDraftStore } from '../stores/appStores';
 import {
   computeSessionStrength,
   computeStreak,
   computeStrengthSeries,
+  formatDisplayDate,
+  hasMeaningfulDraftData,
+  summarizeDraft,
   todayISO,
 } from '../data/repositories';
 import { WorkoutSession } from '../data/models';
@@ -34,6 +37,15 @@ export function WorkoutHomeScreen({ navigation }: any) {
   const sessions = useWorkoutStore((s) => s.sessions);
   const toggleRestDay = useWorkoutStore((s) => s.toggleRestDay);
   const deleteSession = useWorkoutStore((s) => s.deleteSession);
+
+  // In-progress workout. Persisted separately from completed sessions, so it is
+  // never part of `sessions`, strength, streak or the previous-workouts list.
+  const currentDraft = useCurrentDraftStore((s) => s.draft);
+  const hasCurrent = hasMeaningfulDraftData(currentDraft);
+  const currentSummary = useMemo(
+    () => (currentDraft && hasCurrent ? summarizeDraft(currentDraft) : null),
+    [currentDraft, hasCurrent],
+  );
 
   const today = todayISO();
 
@@ -115,11 +127,11 @@ export function WorkoutHomeScreen({ navigation }: any) {
             color={item.restDay ? colors.accent : colors.textMuted}
           />
           <Text style={{ color: colors.text, fontSize: fontSize.body, fontWeight: '700' }}>
-            {item.restDay ? 'Rest day' : item.date}
+            {item.restDay ? 'Rest day' : formatDisplayDate(item.date)}
           </Text>
         </View>
         <Text style={{ color: colors.textMuted, fontSize: fontSize.caption, marginTop: 2 }}>
-          {item.restDay ? `${item.date} · marked as rest` : summaryOf(item)}
+          {item.restDay ? `${formatDisplayDate(item.date)} · marked as rest` : summaryOf(item)}
         </Text>
       </Pressable>
     </View>
@@ -214,11 +226,54 @@ export function WorkoutHomeScreen({ navigation }: any) {
               </View>
             </Card>
 
+            {hasCurrent && currentDraft && currentSummary ? (
+              <>
+                <SectionTitle>Current workout</SectionTitle>
+                <Card style={{ borderColor: colors.accent, borderWidth: 2 }}>
+                  <View style={styles.streakLine}>
+                    <Ionicons name="play-circle" size={18} color={colors.accent} />
+                    <Text
+                      style={{
+                        color: colors.accent,
+                        fontWeight: '800',
+                        fontSize: fontSize.caption,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.6,
+                      }}
+                    >
+                      In progress
+                    </Text>
+                  </View>
+                  <Text
+                    style={{ color: colors.text, fontWeight: '800', fontSize: fontSize.title, marginTop: 6 }}
+                  >
+                    {currentSummary.parts.length > 0
+                      ? currentSummary.parts.join(', ')
+                      : 'Workout in progress'}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: fontSize.caption, marginTop: 2 }}>
+                    {currentSummary.exercises} exercise{currentSummary.exercises === 1 ? '' : 's'} ·{' '}
+                    {currentSummary.sets} set{currentSummary.sets === 1 ? '' : 's'}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: fontSize.caption, marginTop: 2 }}>
+                    {formatDisplayDate(currentDraft.date)}
+                  </Text>
+                  <Button
+                    label="Resume workout"
+                    onPress={() => navigation.navigate('AddWorkout')}
+                    style={{ marginTop: spacing.m }}
+                  />
+                </Card>
+              </>
+            ) : null}
+
             <SectionTitle>Previous workouts</SectionTitle>
           </View>
         }
         ListEmptyComponent={
-          <EmptyState message="No workouts yet. Tap “Add workout” to log your first session." />
+          hasCurrent ? null : (
+            <EmptyState message="No workouts yet. Tap “Add workout” to log your first session." />
+          )
         }
         renderItem={renderItem}
       />
@@ -229,7 +284,10 @@ export function WorkoutHomeScreen({ navigation }: any) {
           { paddingBottom: spacing.m + insets.bottom * 0, paddingHorizontal: spacing.m },
         ]}
       >
-        <Button label="+ Add workout" onPress={() => navigation.navigate('AddWorkout')} />
+        <Button
+          label={hasCurrent ? 'Resume current workout' : '+ Add workout'}
+          onPress={() => navigation.navigate('AddWorkout')}
+        />
       </View>
 
       {/* In-app confirm dialog (Alert.alert is a no-op on web). */}
