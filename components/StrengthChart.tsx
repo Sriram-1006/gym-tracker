@@ -1,4 +1,3 @@
-import React from 'react';
 import { Text, View } from 'react-native';
 import { CartesianChart, Line, Area } from 'victory-native';
 import { matchFont, type SkFont } from '@shopify/react-native-skia';

@@ -250,7 +250,7 @@ CI contains no native builds and does not require an Expo account (platform-spec
 
 ### Tech stack
 
-React Native (Expo SDK 54) · TypeScript · React Navigation (bottom tabs + native stack) · Zustand · AsyncStorage · @expo/vector-icons (Ionicons) · Victory Native (Skia) for the strength chart · React Native Web for browser preview · Vitest + Testing Library for tests.
+React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + native stack) · Zustand · AsyncStorage · @expo/vector-icons (Ionicons) · Victory Native (Skia) for the strength chart · React Native Web for browser preview · Vitest + Testing Library for tests.
 
 ---
 

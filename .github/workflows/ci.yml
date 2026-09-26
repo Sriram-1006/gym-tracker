@@ -17,7 +17,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Node 22: required by Vitest 5 / Vite 8 (>= 22.12) and supported by Expo SDK 54.
+      # Node 22: required by Vitest 5 / Vite 8 (>= 22.12) and supported by Expo SDK 57
+      # (react-native@0.86 engines: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0).
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
