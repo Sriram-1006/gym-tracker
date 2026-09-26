@@ -136,7 +136,7 @@ All icons come from **Ionicons** (`@expo/vector-icons`).
 
 ## Feedback & accessibility
 
-- **Toasts** confirm actions across the app (e.g. “Workout saved”, “Workout updated”, “Workout deleted”, “Today marked as rest”, “Rest day unmarked”, duplicate exercise/body-part notices, “Backup downloaded” / “Backup shared”, “Imported N workouts and M diet logs”, and error messages). They appear above the tab bar and work on every platform (unlike native `Alert`).
+- **Toasts** confirm actions across the app (e.g. “Workout saved”, “Workout updated”, “Workout deleted”, “Today marked as rest”, “Rest day unmarked”, duplicate exercise/body-part notices, “Backup downloaded”, “Backup imported successfully.”, and error messages). They appear above the tab bar and work on every platform (unlike native `Alert`). A native export does **not** toast — the share sheet is the confirmation.
 - **Confirmations** use a themed in-app dialog (not `Alert.alert`, which is a no-op on web) for delete, rest-day, import, save-changes and editor removals.
 - **Hydration gate** — on launch the app shows a spinner until the theme, workouts, diet, exercise library and current draft are all loaded from storage, so you never see a flash of empty UI.
 - **Touch targets** are at least **44 px**, and interactive elements carry `accessibilityRole` / `accessibilityLabel` throughout.
@@ -145,10 +145,42 @@ All icons come from **Ionicons** (`@expo/vector-icons`).
 
 ## Settings & data backup
 
-Open **Settings** from the gear icon on the Workout screen. The header is a custom header (like the rest of the app) with a **Back** button that returns to the previous screen.
+Open **Settings** from the gear icon on the Workout screen. The header is a custom header (like the rest of the app) with a **Back** button that returns to the previous screen. The data section itself is deliberately just two rows — the operating system does the rest:
 
-- **Export data** writes a JSON backup of all workouts, diet logs, custom exercises and your theme preference. The file is named `gym-tracker-backup-YYYY-MM-DD.json`.
-- **Import data** reads a JSON backup, **validates it deeply**, then asks for confirmation before replacing your data. On success a toast reports how many workouts and diet logs were imported.
+```text
+DATA & BACKUP
+┌──────────────────────────────────────────────┐
+│ Export Data                               →  │
+│ Save your workout and diet data as a        │
+│ backup file                                 │
+└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Import Data                               →  │
+│ Restore your data from a backup file         │
+└──────────────────────────────────────────────┘
+```
+
+- **Export Data** writes a JSON backup of all workouts, diet logs, custom exercises and your theme preference, named `gym-tracker-backup-YYYY-MM-DD.json`.
+  - While the file is generated the row shows a spinner + **“Exporting backup…”**.
+  - The spinner disappears the moment the **system share sheet** opens (the row returns to its normal text, then to normal — enabled — once the flow ends). The app never picks a destination: Drive, Files, Downloads, WhatsApp, mail, … are all offered by the OS.
+  - Closing or cancelling the share sheet is **not** an error — nothing is reported. Only a real generation/sharing failure shows “Couldn't export your backup. Please try again.”, and success is never claimed otherwise.
+- **Import Data** opens the **system file picker** (JSON filtered), reads and **deeply validates** the file, and only then shows the confirmation. The app never picks a source (Google Drive etc. come from the OS picker) and never opens the share sheet for import.
+  - An unparsable or structurally invalid file never opens the confirmation: it reports **“Invalid Gym Tracker backup file.”** (the specific reason goes to the console) and leaves existing data untouched.
+  - A valid file opens this confirmation, and **nothing is written until Import is pressed**:
+
+```text
+Import Backup?
+
+Workouts                     18
+Diet logs                    12
+Custom exercises             24
+
+Your current app data will be replaced by this backup.
+
+                [ Cancel ]   [ Import ]
+```
+
+**Cancel** closes the dialog, keeps every key in storage untouched and shows no message. **Import** performs the validated replace, re-hydrates all stores and toasts **“Backup imported successfully.”** — a failure reports the real reason (data is rolled back) and never claims success.
 
 ### Backup format
 
@@ -232,7 +264,7 @@ Tests run with [Vitest](https://vitest.dev) and are split by environment:
   - `tests/theme.test.ts` — theme persistence.
 - **Component / screen tests** (`jsdom`, rendering through `@testing-library/react` backed by React Native Web):
   - `tests/components/*` — the shared UI kit, `BodyPartPickerModal`, `WorkoutDraftEditor`.
-  - `tests/screens/*` — Add Workout (incl. the body-part data-loss guard), Edit Workout (incl. the “editing one body part wiped the others” regression), Workout home/detail navigation, Diet (today + history + rollover), Settings (import/export with mocked file APIs).
+  - `tests/screens/*` — Add Workout (incl. the body-part data-loss guard), Edit Workout (incl. the “editing one body part wiped the others” regression), Workout home/detail navigation, Diet (today + history + rollover), Settings (the whole backup flow with mocked file/share APIs: export loading state → share-sheet handoff → no error on cancel → real failure reported; import picker → invalid file rejected → summary shown → cancel keeps data → confirm imports/hydrates → failed write reports no success).
 
 Component tests opt into jsdom with a `// @vitest-environment jsdom` docblock; `vitest.config.mts` aliases `react-native` → `react-native-web` and `tests/setup/vitest.setup.ts` stubs native-only modules.
 
@@ -264,6 +296,13 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 ---
 
 ## Changelog
+
+### Unreleased — Export / Import UX refinement
+
+- **Export.** The row now shows “Exporting backup…” only while the file is generated; the loading state ends the moment the OS takes the file (share sheet open / download started) and the row returns to normal when the flow ends. Cancelling or closing the share sheet is no longer reported as anything — an error is shown only when generation or sharing actually fails.
+- **Import.** The confirmation now shows what the backup contains (workouts, diet logs, custom exercises as label/value rows) plus the replacement warning; invalid files are uniformly reported as “Invalid Gym Tracker backup file.” without opening the dialog. Cancel writes nothing, confirm imports and hydrates, and success is reported only after the validated import lands.
+- **Settings UI.** Data section is two simple cards (Export Data / Import Data) with descriptions and a chevron, using the existing theme; the OS still handles destination/source selection (share sheet, file picker).
+- **Tests.** Settings screen tests expanded from 6 to 13 (loading states, share-sheet handoff, cancelled share, validation, summary, cancel/confirm, failed import).
 
 ### 1.1.1 — Documentation of new features & clarifications
 

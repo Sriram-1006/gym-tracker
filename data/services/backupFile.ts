@@ -14,8 +14,19 @@ import { File, Paths } from 'expo-file-system';
 
 export type ExportOutcome = 'downloaded' | 'shared';
 
-/** Write `json` to a file and hand it to the user (download on web, share on native). */
-export async function saveBackupFile(json: string, filename: string): Promise<ExportOutcome> {
+/**
+ * Write `json` to a file and hand it to the user (download on web, share on native).
+ *
+ * `onHandedOff` fires as soon as the file is handed to the OS — right before the
+ * native share sheet opens (on web: right after the download starts). Callers use
+ * it to drop their loading state; the returned promise settles later, once the
+ * share/download flow has actually ended.
+ */
+export async function saveBackupFile(
+  json: string,
+  filename: string,
+  onHandedOff?: () => void,
+): Promise<ExportOutcome> {
   if (Platform.OS === 'web') {
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -26,6 +37,7 @@ export async function saveBackupFile(json: string, filename: string): Promise<Ex
     anchor.click();
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
+    onHandedOff?.();
     return 'downloaded';
   }
 
@@ -37,6 +49,7 @@ export async function saveBackupFile(json: string, filename: string): Promise<Ex
   if (file.exists) file.delete();
   file.create();
   file.write(json);
+  onHandedOff?.();
   await Sharing.shareAsync(file.uri, {
     mimeType: 'application/json',
     dialogTitle: 'Export Gym Tracker data',

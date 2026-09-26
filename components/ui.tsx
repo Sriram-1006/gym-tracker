@@ -200,6 +200,7 @@ export function ConfirmDialog({
   visible,
   title,
   message,
+  children,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   destructive = false,
@@ -209,6 +210,8 @@ export function ConfirmDialog({
   visible: boolean;
   title: string;
   message?: string;
+  /** Optional block rendered under the message (e.g. an import summary). */
+  children?: React.ReactNode;
   confirmLabel?: string;
   /** Empty string hides the cancel button (OK-only dialogs). */
   cancelLabel?: string;
@@ -236,10 +239,18 @@ export function ConfirmDialog({
             {title}
           </Text>
           {message ? (
-            <Text style={{ color: colors.textMuted, fontSize: fontSize.body, lineHeight: 21, marginBottom: spacing.m }}>
+            <Text
+              style={{
+                color: colors.textMuted,
+                fontSize: fontSize.body,
+                lineHeight: 21,
+                marginBottom: children ? spacing.s : spacing.m,
+              }}
+            >
               {message}
             </Text>
           ) : null}
+          {children ? <View style={{ marginBottom: spacing.m }}>{children}</View> : null}
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.s }}>
             {cancelLabel ? <Button label={cancelLabel} variant="ghost" size="sm" onPress={onCancel} /> : null}
             <Button
