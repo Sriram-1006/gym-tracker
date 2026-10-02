@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '../theme/ThemeContext';
-import { formatDisplayDate, parseISODateLocal, todayISO } from '../data/dateUtils';
+import { formatDisplayDate, isFutureISO, parseISODateLocal, todayISO } from '../data/dateUtils';
 
 /**
  * Shared date input used by Add Workout and Edit Workout.
@@ -49,7 +49,12 @@ export function DatePickerField({
         'aria-label': 'Workout date',
         onChange: (event: { target?: { value?: unknown } }) => {
           const next = event?.target?.value;
-          if (typeof next === 'string' && next) onChange(next);
+          if (typeof next !== 'string' || !next) return;
+          // `min`/`max` are only hints on the web (they never block typing or
+          // programmatic changes), so enforce the same rules the native picker
+          // enforces: no dates after today, none before the earliest allowed.
+          if (isFutureISO(next) || next < minISO) return;
+          onChange(next);
         },
         style: {
           minHeight: `${touchTarget}px`,
