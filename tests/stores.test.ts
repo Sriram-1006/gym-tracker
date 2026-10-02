@@ -243,6 +243,18 @@ describe('useDietStore', () => {
     expect(persisted[0].protein).toBe(50);
   });
 
+  it('addToLog ignores non-finite and negative amounts', async () => {
+    await useDietStore.getState().addToLog({ protein: 30 });
+    await useDietStore.getState().addToLog({ protein: Number.POSITIVE_INFINITY });
+    await useDietStore.getState().addToLog({ protein: -5 });
+
+    // Infinity would be stored as null by JSON.stringify, and a negative value
+    // would corrupt the day's log — neither may reach the store or storage.
+    expect(useDietStore.getState().todayLog.protein).toBe(30);
+    const persisted = JSON.parse(storage.get('diet.logs.v1')!) as DietLog[];
+    expect(persisted[0].protein).toBe(30);
+  });
+
   it('resetTodayLog zeroes the log while keeping other days intact', async () => {
     const yesterday: DietLog = {
       date: shiftISODate(todayISO(), -1),

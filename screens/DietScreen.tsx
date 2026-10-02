@@ -4,7 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useDietStore, DEFAULT_TARGETS } from '../stores/appStores';
-import { formatDisplayDateShort, selectHistoricalLogs } from '../data/repositories';
+import { formatDisplayDateShort, parseDraftNumber, selectHistoricalLogs } from '../data/repositories';
+import { sanitizeDecimalInput } from '../data/numberInput';
 import { Button, Card, EmptyState, ProgressBar, SectionTitle } from '../components/ui';
 import { MacroKey } from '../data/models';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,10 +72,10 @@ export function DietScreen() {
 
   const saveForm = async () => {
     const parsed: Record<MacroKey, number> = {
-      protein: Number(form.protein) || 0,
-      carbs: Number(form.carbs) || 0,
-      fats: Number(form.fats) || 0,
-      fiber: Number(form.fiber) || 0,
+      protein: parseDraftNumber(form.protein),
+      carbs: parseDraftNumber(form.carbs),
+      fats: parseDraftNumber(form.fats),
+      fiber: parseDraftNumber(form.fiber),
     };
     if (parsed.protein <= 0 && parsed.carbs <= 0 && parsed.fats <= 0 && parsed.fiber <= 0) {
       setFormError('Enter a target for at least one macro.');
@@ -86,7 +87,7 @@ export function DietScreen() {
 
   const saveLog = async () => {
     if (!logOpenFor) return;
-    const grams = Number(logValue.replace(',', '.')) || 0;
+    const grams = parseDraftNumber(logValue);
     if (grams <= 0) {
       setLogOpenFor(null);
       setLogValue('');
@@ -111,7 +112,7 @@ export function DietScreen() {
           </Text>
           <TextInput
             value={form[m.key]}
-            onChangeText={(t) => setForm((f) => ({ ...f, [m.key]: t }))}
+            onChangeText={(t) => setForm((f) => ({ ...f, [m.key]: sanitizeDecimalInput(t) }))}
             keyboardType="number-pad"
             placeholder="0"
             placeholderTextColor={colors.textMuted}
@@ -199,7 +200,7 @@ export function DietScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.s, marginTop: spacing.s }}>
             <TextInput
               value={logValue}
-              onChangeText={setLogValue}
+              onChangeText={(t) => setLogValue(sanitizeDecimalInput(t))}
               keyboardType="decimal-pad"
               placeholder={`Grams of ${m.label.toLowerCase()}…`}
               placeholderTextColor={colors.textMuted}

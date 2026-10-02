@@ -300,6 +300,7 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 
 ### Unreleased — Export / Import UX refinement
 
+- **Numeric input.** Weight/reps and diet fields strip minus signs, letters and extra decimal separators while typing (`1,5` still reads as `1.5`), negative/non-finite numbers are rejected at parse time, and reps are floored to whole numbers when a set is committed — so the app can no longer store data its own backup validator refuses.
 - **Streak.** A morning with nothing logged yet no longer resets the streak: today is treated as still open, so the count from the previous days stays visible until the day ends without a workout or rest mark.
 
 - **Export.** The row now shows “Exporting backup…” only while the file is generated; the loading state ends the moment the OS takes the file (share sheet open / download started) and the row returns to normal when the flow ends. Cancelling or closing the share sheet is no longer reported as anything — an error is shown only when generation or sharing actually fails.

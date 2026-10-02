@@ -30,6 +30,8 @@ import {
   currentDraftRepository,
   draftToBodyParts,
   hasMeaningfulDraftData,
+  parseDraftNumber,
+  parseDraftReps,
   summarizeDraft,
   todayISO,
 } from '../data/repositories';
@@ -393,6 +395,28 @@ describe('numeric input handling', () => {
       { weight: 17, reps: 5 },
       { weight: 1.5, reps: 0 },
     ]);
+  });
+
+  it('rejects negative and non-finite numbers', () => {
+    expect(parseDraftNumber('-5')).toBe(0);
+    expect(parseDraftNumber('1e999')).toBe(0);
+    expect(parseDraftNumber('1,5')).toBe(1.5);
+    // A negative weight must never reach storage (the backup validator
+    // rejects it, so the app would create data it cannot restore).
+    const draft = makeDraft({
+      activeBodyPart: 'Chest',
+      activeExercises: [ex('Bench Press', [['-5', '10']])],
+    });
+    expect(draftToBodyParts(draft)[0].exercises[0].sets).toEqual([{ weight: 0, reps: 10 }]);
+  });
+
+  it('floors reps to whole numbers at the commit boundary', () => {
+    expect(parseDraftReps('2.9')).toBe(2);
+    const draft = makeDraft({
+      activeBodyPart: 'Chest',
+      activeExercises: [ex('Bench Press', [['60', '2.9']])],
+    });
+    expect(draftToBodyParts(draft)[0].exercises[0].sets).toEqual([{ weight: 60, reps: 2 }]);
   });
 });
 

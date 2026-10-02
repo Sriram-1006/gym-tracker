@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Button, Card } from './ui';
 import { useTheme } from '../theme/ThemeContext';
 import { DraftSet } from '../data/models';
+import { sanitizeDecimalInput, sanitizeIntegerInput } from '../data/numberInput';
 
 export interface WorkoutDraftEditorProps {
   draft: { bodyPart: string; exercises: { name: string; sets: DraftSet[] }[] }[];
@@ -72,7 +73,7 @@ function ExerciseItem({
           <TextInput
             value={s.weight}
             onChangeText={(t: string) => {
-              onUpdateSet(bpName, exIdx, j, { weight: t });
+              onUpdateSet(bpName, exIdx, j, { weight: sanitizeDecimalInput(t) });
             }}
             keyboardType="decimal-pad"
             placeholder="kg"
@@ -85,7 +86,7 @@ function ExerciseItem({
           <TextInput
             value={s.reps}
             onChangeText={(t: string) => {
-              onUpdateSet(bpName, exIdx, j, { reps: t });
+              onUpdateSet(bpName, exIdx, j, { reps: sanitizeIntegerInput(t) });
             }}
             keyboardType="number-pad"
             placeholder="reps"

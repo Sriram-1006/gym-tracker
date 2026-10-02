@@ -18,12 +18,14 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 import {
+  createEmptyDraft,
+  draftToBodyParts,
   exportAllData,
   importAllData,
   validateBackupPayload,
   type BackupPayload,
 } from '../../data/repositories';
-import { WorkoutSession } from '../../data/models';
+import { CurrentWorkoutDraft, WorkoutSession } from '../../data/models';
 
 const WORKOUTS_KEY = 'workouts.sessions.v1';
 const DIET_LOGS_KEY = 'diet.logs.v1';
@@ -80,6 +82,29 @@ describe('exportAllData', () => {
     const payload = await exportAllData();
     expect(payload.data.workouts).toHaveLength(1);
     expect(payload.data.workouts[0].bodyParts[0].exercises[0].name).toBe('Bench Press');
+  });
+
+  it('accepts an export built from a draft whose weight was typed as "-5"', async () => {
+    const draft: CurrentWorkoutDraft = {
+      ...createEmptyDraft('2026-09-11'),
+      activeBodyPart: 'Chest',
+      activeExercises: [{ name: 'Bench Press', sets: [{ weight: '-5', reps: '10' }] }],
+    };
+    const bodyParts = draftToBodyParts(draft);
+    const sets = bodyParts[0].exercises[0].sets;
+    // The negative value must never survive to storage.
+    expect(sets.every((s) => s.weight >= 0)).toBe(true);
+
+    const session: WorkoutSession = {
+      id: 'w_neg',
+      date: '2026-09-11',
+      restDay: false,
+      createdAt: 1,
+      bodyParts,
+    };
+    storage.set(WORKOUTS_KEY, JSON.stringify([session]));
+    const payload = await exportAllData();
+    expect(() => validateBackupPayload(payload)).not.toThrow();
   });
 });
 

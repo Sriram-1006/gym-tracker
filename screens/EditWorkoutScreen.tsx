@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkoutStore } from '../stores/appStores';
-import { parseDraftNumber, todayISO } from '../data/repositories';
+import { parseDraftNumber, parseDraftReps, todayISO } from '../data/repositories';
 import { BodyPartEntry, DraftBodyPart, DraftExercise, DraftSet } from '../data/models';
 import { Button, Card, SectionTitle, ConfirmDialog } from '../components/ui';
 import { DatePickerField } from '../components/DatePickerField';
@@ -20,6 +20,7 @@ import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
 import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
+import { sanitizeDecimalInput, sanitizeIntegerInput } from '../data/numberInput';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -46,7 +47,7 @@ function toSessionBodyParts(bodyParts: DraftBodyPart[]): BodyPartEntry[] {
         .map((ex) => ({
           name: ex.name.trim(),
           sets: ex.sets
-            .map((s) => ({ weight: parseDraftNumber(s.weight), reps: parseDraftNumber(s.reps) }))
+            .map((s) => ({ weight: parseDraftNumber(s.weight), reps: parseDraftReps(s.reps) }))
             .filter((s) => s.weight !== 0 || s.reps !== 0),
         }))
         .filter((ex) => ex.name && ex.sets.length > 0),
@@ -601,7 +602,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
                           </Text>
                           <TextInput
                             value={s.weight}
-                            onChangeText={(t) => updateSet(i, j, { weight: t })}
+                            onChangeText={(t) => updateSet(i, j, { weight: sanitizeDecimalInput(t) })}
                             keyboardType="decimal-pad"
                             placeholder="kg"
                             placeholderTextColor={colors.textMuted}
@@ -609,7 +610,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
                           />
                           <TextInput
                             value={s.reps}
-                            onChangeText={(t) => updateSet(i, j, { reps: t })}
+                            onChangeText={(t) => updateSet(i, j, { reps: sanitizeIntegerInput(t) })}
                             keyboardType="number-pad"
                             placeholder="reps"
                             placeholderTextColor={colors.textMuted}

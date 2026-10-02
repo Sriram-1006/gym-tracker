@@ -6,6 +6,7 @@ import {
   dietRepository,
   draftToBodyParts,
   hasMeaningfulDraftData,
+  MACRO_KEYS,
   normalizeDietLogs,
   selectHistoricalLogs,
   shiftISODate,
@@ -334,18 +335,27 @@ export const useDietStore = create<DietState>((set, get) => ({
   },
 
   addToLog: async (grams) => {
+    // Defense in depth: only finite, positive amounts may reach the log —
+    // Infinity would be stored as null by JSON.stringify, negatives would
+    // corrupt the day's totals.
+    const clean: Partial<Record<MacroKey, number>> = {};
+    for (const key of MACRO_KEYS) {
+      const value = grams[key];
+      clean[key] = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+    }
+
     const today = todayISO();
     const logs = await dietRepository.getLogs();
     const existing = logs.find((l: DietLog) => l.date === today);
     const next: DietLog = existing
       ? {
           ...existing,
-          protein: existing.protein + (grams.protein ?? 0),
-          carbs: existing.carbs + (grams.carbs ?? 0),
-          fats: existing.fats + (grams.fats ?? 0),
-          fiber: existing.fiber + (grams.fiber ?? 0),
+          protein: existing.protein + (clean.protein ?? 0),
+          carbs: existing.carbs + (clean.carbs ?? 0),
+          fats: existing.fats + (clean.fats ?? 0),
+          fiber: existing.fiber + (clean.fiber ?? 0),
         }
-      : { ...emptyLog(today), ...grams };
+      : { ...emptyLog(today), ...clean };
     const merged = normalizeDietLogs([next, ...logs.filter((l) => l.date !== today)]);
     set({ todayLog: { ...next }, history: merged });
     await dietRepository.saveLogs(merged);

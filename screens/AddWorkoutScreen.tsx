@@ -28,6 +28,7 @@ import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
 import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
+import { sanitizeDecimalInput, sanitizeIntegerInput } from '../data/numberInput';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -513,7 +514,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 </Text>
                 <TextInput
                   value={s.weight}
-                  onChangeText={(t) => updateActiveSet(i, j, { weight: t })}
+                  onChangeText={(t) => updateActiveSet(i, j, { weight: sanitizeDecimalInput(t) })}
                   keyboardType="decimal-pad"
                   placeholder="kg"
                   placeholderTextColor={colors.textMuted}
@@ -521,7 +522,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 />
                 <TextInput
                   value={s.reps}
-                  onChangeText={(t) => updateActiveSet(i, j, { reps: t })}
+                  onChangeText={(t) => updateActiveSet(i, j, { reps: sanitizeIntegerInput(t) })}
                   keyboardType="number-pad"
                   placeholder="reps"
                   placeholderTextColor={colors.textMuted}

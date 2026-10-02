@@ -115,18 +115,28 @@ export function commitActiveBodyPart(draft: CurrentWorkoutDraft): CurrentWorkout
   return { ...cleared, bodyParts };
 }
 
-/** Parse a user-typed numeric string; blank/invalid -> 0. Accepts "1,5". */
+/**
+ * Parse a user-typed numeric string; blank/invalid/negative -> 0.
+ * Accepts "1,5" as 1.5. Non-finite results (Infinity, NaN) are rejected too,
+ * so a value like `1e999` can never be stored as null by JSON.stringify.
+ */
 export function parseDraftNumber(value: string): number {
   if (value == null) return 0;
   const n = Number(String(value).trim().replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+/** Reps are whole numbers: the typed value is floored (partial input -> 0). */
+export function parseDraftReps(value: string): number {
+  return Math.floor(parseDraftNumber(value));
 }
 
 function toSessionExercise(ex: DraftExercise): ExerciseEntry {
   return {
     name: ex.name.trim(),
     sets: ex.sets
-      .map((s) => ({ weight: parseDraftNumber(s.weight), reps: parseDraftNumber(s.reps) }))
+      .map((s) => ({ weight: parseDraftNumber(s.weight), reps: parseDraftReps(s.reps) }))
       // Drop fully blank sets — never fabricate a 0 kg / 0 reps completed set.
       .filter((s) => s.weight !== 0 || s.reps !== 0),
   };

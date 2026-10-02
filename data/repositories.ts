@@ -23,6 +23,7 @@ export {
   draftToBodyParts,
   summarizeDraft,
   parseDraftNumber,
+  parseDraftReps,
   hasSetData,
 } from './draft';
 export type { DraftSummary } from './draft';
