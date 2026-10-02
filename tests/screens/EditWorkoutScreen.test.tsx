@@ -148,6 +148,33 @@ describe('EditWorkoutScreen', () => {
     expect(session.bodyParts[2].exercises[0].sets).toEqual([{ weight: 60, reps: 10 }]);
   });
 
+  it('keeps an in-progress body part when "Add another body part" is used', async () => {
+    setup();
+    fireEvent.click(screen.getByText('Add body part'));
+    fireEvent.click(screen.getByText('Legs'));
+    fireEvent.click(screen.getByText('Add'));
+    fireEvent.click(screen.getByText('Add exercise (pick or type free text)…'));
+    fireEvent.click(screen.getByText('Squat'));
+    fireEvent.click(screen.getByText('Add exercise'));
+    fireEvent.change(screen.getAllByPlaceholderText('kg')[0], { target: { value: '60' } });
+    fireEvent.change(screen.getAllByPlaceholderText('reps')[0], { target: { value: '10' } });
+
+    // Move on to another body part WITHOUT saving first.
+    fireEvent.click(screen.getByText('Add another body part'));
+    fireEvent.click(screen.getByText('Shoulders'));
+    fireEvent.click(screen.getByText('Add'));
+
+    confirmSave();
+    await waitFor(() =>
+      expect(currentSession().bodyParts.map((b) => b.bodyPart)).toContain('Legs'),
+    );
+    const legs = currentSession().bodyParts.find((b) => b.bodyPart === 'Legs')!;
+    expect(legs.exercises[0].name).toBe('Squat');
+    expect(legs.exercises[0].sets).toEqual([{ weight: 60, reps: 10 }]);
+    // The original Chest/Back data must still be there.
+    expect(currentSession().bodyParts.map((b) => b.bodyPart)).toContain('Chest');
+  });
+
   it('deletes a set through the confirmation dialog', async () => {
     // Chest with two sets so removing one keeps the exercise and the Back part.
     useWorkoutStore.setState({

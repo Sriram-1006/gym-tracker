@@ -127,6 +127,21 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     setPartPickerOpen(true);
   };
 
+  /**
+   * Commit the in-progress body part (if any) before opening the picker, so a
+   * half-typed entry is never silently discarded when moving on.
+   */
+  const beginAddBodyPart = () => {
+    if (bodyPart && exercises.length > 0) {
+      // commitBodyPart(true) validates, merges into draft and opens the picker
+      // itself. On a validation error it returns null and keeps the entry
+      // visible with the error message set.
+      commitBodyPart(true);
+      return;
+    }
+    openBodyPartPicker();
+  };
+
   /** Handle confirmation from the shared body-part picker. */
   const handleBodyPartPickerConfirm = (selectedBodyPart: string) => {
     const alreadyInDraft = draftBodyParts.has(selectedBodyPart);
@@ -523,12 +538,12 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             />
 
             {/* Add body part button */}
-            <Button
-              label="Add body part"
-              variant="secondary"
-              onPress={openBodyPartPicker}
-              style={{ marginTop: spacing.m, marginBottom: spacing.m }}
-            />
+                <Button
+                  label="Add body part"
+                  variant="secondary"
+                  onPress={beginAddBodyPart}
+                  style={{ marginTop: spacing.m, marginBottom: spacing.m }}
+                />
 
             {/* Active body part / exercise entry area */}
             {bodyPart && (
@@ -640,7 +655,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
                 <Button
                   label="Add another body part"
                   variant="secondary"
-                  onPress={openBodyPartPicker}
+                  onPress={beginAddBodyPart}
                 />
                 <Button
                   label={saving ? 'Saving…' : 'Save Changes'}
