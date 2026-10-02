@@ -328,7 +328,11 @@ export function daysBetweenISO(fromISO: string, toISO: string): number {
  */
 export const workoutRepository = {
   async getAll(): Promise<WorkoutSession[]> {
-    return (await storageService.getItem<WorkoutSession[]>(WORKOUTS_KEY)) ?? [];
+    const value = await storageService.getItem<unknown>(WORKOUTS_KEY);
+    // Corrupt values that still parse (hand-edited backups, truncated writes)
+    // must hydrate as an empty list: a thrown hydrate rejected the startup
+    // gate and left the app on the loading spinner forever.
+    return Array.isArray(value) ? (value as WorkoutSession[]) : [];
   },
 
   async saveAll(sessions: WorkoutSession[]): Promise<void> {
@@ -351,7 +355,9 @@ export const workoutRepository = {
 
 export const customExerciseRepository = {
   async getAll(): Promise<Record<string, string[]>> {
-    return (await storageService.getItem<Record<string, string[]>>(CUSTOM_EXERCISES_KEY)) ?? {};
+    const value = await storageService.getItem<unknown>(CUSTOM_EXERCISES_KEY);
+    // Anything that is not a plain map (array, string, number) hydrates empty.
+    return isPlainObject(value) ? (value as Record<string, string[]>) : {};
   },
 
   async saveAll(byBodyPart: Record<string, string[]>): Promise<void> {
@@ -363,15 +369,13 @@ export const customExerciseRepository = {
 
 export const dietRepository = {
   async getTargets(): Promise<DietTargets> {
-    return (
-      (await storageService.getItem<DietTargets>(DIET_TARGETS_KEY)) ?? {
-        protein: 0,
-        carbs: 0,
-        fats: 0,
-        fiber: 0,
-        isSetup: false,
-      }
-    );
+    const value = await storageService.getItem<unknown>(DIET_TARGETS_KEY);
+    // A non-object value must fall back to "not set up" rather than exposing
+    // `undefined` macros to the diet screen.
+    if (!isPlainObject(value)) {
+      return { protein: 0, carbs: 0, fats: 0, fiber: 0, isSetup: false };
+    }
+    return value as unknown as DietTargets;
   },
 
   async saveTargets(targets: DietTargets): Promise<void> {
@@ -379,7 +383,10 @@ export const dietRepository = {
   },
 
   async getLogs(): Promise<DietLog[]> {
-    return (await storageService.getItem<DietLog[]>(DIET_LOGS_KEY)) ?? [];
+    const value = await storageService.getItem<unknown>(DIET_LOGS_KEY);
+    // See workoutRepository.getAll: a non-list value must not reach
+    // normalizeDietLogs, which would otherwise iterate a string's characters.
+    return Array.isArray(value) ? (value as DietLog[]) : [];
   },
 
   async saveLogs(logs: DietLog[]): Promise<void> {

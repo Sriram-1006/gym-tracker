@@ -24,8 +24,16 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      await Promise.all([hydrateTheme(), hydrateWorkouts(), hydrateDiet(), hydrateExercises(), hydrateCurrentDraft()]);
-      setReady(true);
+      // `finally` is the point: a rejected hydrate (corrupt/missing storage,
+      // a repository bug) must still open the loading gate, otherwise the app
+      // sits on the startup spinner forever with no way out.
+      try {
+        await Promise.all([hydrateTheme(), hydrateWorkouts(), hydrateDiet(), hydrateExercises(), hydrateCurrentDraft()]);
+      } catch (e) {
+        console.warn('[App] Storage hydrate failed; starting with defaults:', e);
+      } finally {
+        setReady(true);
+      }
     })();
   }, [hydrateTheme, hydrateWorkouts, hydrateDiet, hydrateExercises, hydrateCurrentDraft]);
 

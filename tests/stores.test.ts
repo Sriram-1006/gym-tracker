@@ -349,3 +349,54 @@ describe('useExerciseLibraryStore', () => {
     expect(state.custom.Chest).toEqual(['Custom Fly']);
   });
 });
+
+/* ----------------------------- corrupt storage ---------------------------- */
+
+/**
+ * Values that parse as JSON but have the wrong shape (hand-edited backups,
+ * truncated writes) must hydrate to safe defaults instead of throwing —
+ * a rejected hydrate used to leave the app on the startup spinner forever.
+ */
+describe('hydrate with corrupt storage values', () => {
+  it('workout hydrate ignores a sessions value that is not an array', async () => {
+    storage.set('workouts.sessions.v1', JSON.stringify({ not: 'a list' }));
+
+    await expect(useWorkoutStore.getState().hydrate()).resolves.not.toThrow();
+
+    const state = useWorkoutStore.getState();
+    expect(state.hydrated).toBe(true);
+    expect(state.sessions).toEqual([]);
+  });
+
+  it('diet hydrate ignores a logs value that is not an array', async () => {
+    storage.set('diet.logs.v1', JSON.stringify('garbage'));
+
+    await expect(useDietStore.getState().hydrate()).resolves.not.toThrow();
+
+    const state = useDietStore.getState();
+    expect(state.hydrated).toBe(true);
+    expect(state.history).toEqual([]);
+  });
+
+  it('diet hydrate falls back to default targets when targets are not an object', async () => {
+    storage.set('diet.targets.v1', '42');
+
+    await expect(useDietStore.getState().hydrate()).resolves.not.toThrow();
+
+    expect(useDietStore.getState().targets).toEqual({
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+      fiber: 0,
+      isSetup: false,
+    });
+  });
+
+  it('exercise hydrate ignores a custom exercises value that is not an object', async () => {
+    storage.set('exercises.custom.v1', JSON.stringify(['not', 'a', 'map']));
+
+    await expect(useExerciseLibraryStore.getState().hydrate()).resolves.not.toThrow();
+
+    expect(useExerciseLibraryStore.getState().custom).toEqual({});
+  });
+});
