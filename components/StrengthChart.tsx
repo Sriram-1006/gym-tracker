@@ -71,11 +71,13 @@ export function StrengthChart({ data, height = 180 }: { data: Point[]; height?: 
           formatYLabel: (v: number) => String(Math.round(v)),
         }}
       >
-        {({ points: chartPoints }) => (
+        {({ points: chartPoints, chartBounds }) => (
           <>
             <Area
               points={chartPoints.score}
-              y0={0}
+              // `y0` is a pixel coordinate in canvas space: 0 is the top of
+              // the chart, so the fill must run to the bottom of the plot.
+              y0={chartBounds.bottom}
               color={`${colors.accent}55`}
               animate={{ type: 'timing', duration: 300 }}
             />
