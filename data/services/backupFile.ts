@@ -105,7 +105,7 @@ export async function pickBackupText(): Promise<string | null> {
   }
 
   const result = await DocumentPicker.getDocumentAsync({
-    type: 'application/json',
+    type: '*/*',
     copyToCacheDirectory: true,
   });
   if (result.canceled) return null;
