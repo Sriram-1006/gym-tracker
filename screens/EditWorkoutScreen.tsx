@@ -409,6 +409,16 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     setExercises((xs) => xs.filter((_, i) => i !== exIdx));
   };
 
+  // The active entry deletes through the same confirmation dialog as the
+  // committed draft list: a stray tap on Remove/✕ must not lose data.
+  const confirmRemoveActiveSet = (exIdx: number, setIdx: number) => {
+    setConfirmDelete({ type: 'set', onConfirm: () => removeSet(exIdx, setIdx) });
+  };
+
+  const confirmRemoveActiveExercise = (exIdx: number) => {
+    setConfirmDelete({ type: 'exercise', onConfirm: () => removeExercise(exIdx) });
+  };
+
   /* ------------------------------- rendering ----------------------------- */
 
   // Handler functions for the shared WorkoutDraftEditor component
@@ -602,7 +612,12 @@ export function EditWorkoutScreen({ navigation, route }: any) {
                         <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
                           {ex.name}
                         </Text>
-                        <Pressable accessibilityRole="button" onPress={() => removeExercise(i)} hitSlop={8}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove exercise ${ex.name}`}
+                          onPress={() => confirmRemoveActiveExercise(i)}
+                          hitSlop={8}
+                        >
                           <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
                         </Pressable>
                       </View>
@@ -634,7 +649,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
                           <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={`Remove set ${j + 1}`}
-                            onPress={() => removeSet(i, j)}
+                            onPress={() => confirmRemoveActiveSet(i, j)}
                             hitSlop={8}
                             style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
                           >

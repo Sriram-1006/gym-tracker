@@ -234,6 +234,16 @@ export function AddWorkoutScreen({ navigation }: any) {
     commitState({ ...cur, activeExercises: cur.activeExercises.filter((_, i) => i !== exIdx) }, true);
   };
 
+  // The active entry deletes through the same confirmation dialog as the
+  // committed draft list: a stray tap on Remove/✕ must not lose data.
+  const confirmRemoveActiveSet = (exIdx: number, setIdx: number) => {
+    setConfirmDelete({ type: 'set', onConfirm: () => removeActiveSet(exIdx, setIdx) });
+  };
+
+  const confirmRemoveActiveExercise = (exIdx: number) => {
+    setConfirmDelete({ type: 'exercise', onConfirm: () => removeActiveExercise(exIdx) });
+  };
+
   const setActiveExerciseName = (text: string) => {
     commitState({ ...stateRef.current, activeExerciseName: text });
   };
@@ -499,7 +509,12 @@ export function AddWorkoutScreen({ navigation }: any) {
               <Text style={{ color: colors.text, fontWeight: '700', fontSize: fontSize.body }}>
                 {ex.name}
               </Text>
-              <Pressable accessibilityRole="button" onPress={() => removeActiveExercise(i)} hitSlop={8}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove exercise ${ex.name}`}
+                onPress={() => confirmRemoveActiveExercise(i)}
+                hitSlop={8}
+              >
                 <Text style={{ color: colors.destructive, fontSize: fontSize.caption }}>Remove</Text>
               </Pressable>
             </View>
@@ -531,7 +546,7 @@ export function AddWorkoutScreen({ navigation }: any) {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove set ${j + 1}`}
-                  onPress={() => removeActiveSet(i, j)}
+                  onPress={() => confirmRemoveActiveSet(i, j)}
                   hitSlop={8}
                   style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
                 >

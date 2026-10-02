@@ -224,4 +224,33 @@ describe('AddWorkoutScreen', () => {
       { weight: 20, reps: 10 },
     ]);
   });
+
+  // The active entry used to delete immediately (the committed draft list
+  // already asked first) — one stray tap lost an exercise or a set.
+  it('confirms before removing an exercise from the active entry', () => {
+    setup();
+    selectBodyPart('Chest');
+    addExercise('Bench Press');
+
+    fireEvent.click(screen.getByText('Remove'));
+    expect(screen.getByText('Delete this exercise?')).toBeTruthy();
+    expect(draftState()?.activeExercises).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('Delete'));
+    expect(draftState()?.activeExercises ?? []).toHaveLength(0);
+  });
+
+  it('confirms before removing a set from the active entry', () => {
+    setup();
+    selectBodyPart('Chest');
+    addExercise('Bench Press');
+    enterFirstSet('20', '10');
+
+    fireEvent.click(screen.getByLabelText('Remove set 1'));
+    expect(screen.getByText('Delete this set?')).toBeTruthy();
+    expect(draftState()?.activeExercises[0].sets).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('Delete'));
+    expect(draftState()?.activeExercises[0].sets).toHaveLength(0);
+  });
 });

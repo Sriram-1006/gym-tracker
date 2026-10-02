@@ -275,4 +275,41 @@ describe('EditWorkoutScreen', () => {
       'Bench Press is already in this workout — added another set to it.',
     );
   });
+
+  /** Get into the active exercise entry with one exercise and one set. */
+  function startActiveEntry(exerciseName: string) {
+    fireEvent.click(screen.getByText('Add body part'));
+    fireEvent.click(screen.getByText('Legs'));
+    fireEvent.click(screen.getByText('Add'));
+    fireEvent.click(screen.getByText('Add exercise (pick or type free text)…'));
+    fireEvent.click(screen.getByText(exerciseName));
+    fireEvent.click(screen.getByText('Add exercise'));
+  }
+
+  // The active entry used to delete immediately (the committed draft list
+  // already asked first) — one stray tap lost an exercise or a set.
+  it('confirms before removing an exercise from the active entry', () => {
+    setup();
+    startActiveEntry('Squat');
+
+    fireEvent.click(screen.getByText('Remove'));
+    expect(screen.getByText('Delete this exercise?')).toBeTruthy();
+    // Still there while the dialog is open.
+    expect(screen.getByLabelText('Remove exercise Squat')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Delete'));
+    expect(screen.queryByLabelText('Remove exercise Squat')).toBeNull();
+  });
+
+  it('confirms before removing a set from the active entry', () => {
+    setup();
+    startActiveEntry('Squat');
+
+    fireEvent.click(screen.getByLabelText('Remove set 1'));
+    expect(screen.getByText('Delete this set?')).toBeTruthy();
+    expect(screen.getByLabelText('Remove set 1')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Delete'));
+    expect(screen.queryByLabelText('Remove set 1')).toBeNull();
+  });
 });
