@@ -196,4 +196,34 @@ describe('WorkoutHomeScreen', () => {
       vi.useRealTimers();
     }
   });
+
+  it('refreshes "today" when the app returns to the foreground', () => {
+    // Default SESSIONS: trained 10 + 11 Sep, today is 11 Sep → streak 2.
+    // Simulating visibilitychange exercises the AppState 'active' path that
+    // mirrors App.tsx's diet rollover — no timer involved.
+    let visibility: DocumentVisibilityState = 'visible';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility,
+    });
+
+    setup();
+    expect(screen.getByText('2 days')).toBeTruthy();
+
+    // The clock rolls over while the app is in the background: no refresh yet.
+    currentDay.value = '2026-09-13';
+    visibility = 'hidden';
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(screen.getByText('2 days')).toBeTruthy();
+
+    // Back to the foreground: Home recomputes against the new day.
+    visibility = 'visible';
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(screen.getByText('0 days')).toBeTruthy();
+    expect(screen.getByText('Rest days don’t break your streak.')).toBeTruthy();
+  });
 });
