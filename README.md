@@ -300,6 +300,7 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 
 ### Unreleased — Export / Import UX refinement
 
+- **Custom exercise library.** Body part names that collide with `Object` properties (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) no longer crash the picker or the "save as custom exercise" path — all lookups now read own properties only, and a failed library write is logged instead of surfacing as an unhandled rejection.
 - **Backup filename.** Exports are named after the **local** date (`gym-tracker-backup-2026-10-02.json`), not the UTC date carried inside the payload — previously a 02:00 export in a UTC+ timezone produced yesterday's filename.
 - **Diet logging.** Two quick taps on **Add** log once (the input closes before the write), overlapping `addToLog` calls accumulate instead of overwriting each other, and gram totals are rounded to one decimal — `10.1 + 20.2` shows `30.3g`, never `30.299999999999997g`. The macro row label also reads `140g` instead of `140G`.
 - **Numeric input.** Weight/reps and diet fields strip minus signs, letters and extra decimal separators while typing (`1,5` still reads as `1.5`), negative/non-finite numbers are rejected at parse time, and reps are floored to whole numbers when a set is committed — so the app can no longer store data its own backup validator refuses.

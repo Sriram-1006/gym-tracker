@@ -27,7 +27,7 @@ import { DatePickerField } from '../components/DatePickerField';
 import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
-import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
+import { getCustomExercises, getPresetExercises } from '../data/exerciseLibrary';
 import { sanitizeDecimalInput, sanitizeIntegerInput } from '../data/numberInput';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
@@ -119,7 +119,7 @@ export function AddWorkoutScreen({ navigation }: any) {
   );
 
   const allExercisesFor = useMemo(
-    () => (part: string) => [...(EXERCISE_LIBRARY[part] ?? []), ...(customExercises[part] ?? [])],
+    () => (part: string) => [...getPresetExercises(part), ...getCustomExercises(customExercises, part)],
     [customExercises],
   );
 
@@ -188,7 +188,7 @@ export function AddWorkoutScreen({ navigation }: any) {
     }
     commitState({ ...cur, activeExercises, activeExerciseName: '' }, true);
     const part = cur.activeBodyPart;
-    if (part && !EXERCISE_LIBRARY[part]?.includes(trimmed)) addCustomExercise(part, trimmed);
+    if (part && !getPresetExercises(part).includes(trimmed)) addCustomExercise(part, trimmed);
   };
 
   const updateActiveSet = (exIdx: number, setIdx: number, patch: Partial<DraftSet>) => {
@@ -261,7 +261,7 @@ export function AddWorkoutScreen({ navigation }: any) {
       return { ...bp, exercises: [...bp.exercises, { name: trimmed, sets: [blankSet()] }] };
     });
     commitState({ ...cur, bodyParts }, true);
-    if (!EXERCISE_LIBRARY[bpName]?.includes(trimmed)) addCustomExercise(bpName, trimmed);
+    if (!getPresetExercises(bpName).includes(trimmed)) addCustomExercise(bpName, trimmed);
   };
 
   const handleAddSet = (bpName: string, exIdx: number) => {

@@ -12,3 +12,17 @@ export const EXERCISE_LIBRARY: Record<string, string[]> = {
   Triceps: ['Triceps Pushdown', 'Skullcrusher'],
   Core: ['Plank (timed)', 'Crunch', 'Hanging Leg Raise', 'Russian Twist'],
 };
+
+/**
+ * Safe lookups for user-supplied body part names. A custom name such as
+ * `constructor`, `toString` or `__proto__` would otherwise hit an inherited
+ * `Object` member (`EXERCISE_LIBRARY['constructor']` is a function) and crash
+ * the caller — so only own properties are ever read.
+ */
+export function getPresetExercises(bodyPart: string): string[] {
+  return Object.prototype.hasOwnProperty.call(EXERCISE_LIBRARY, bodyPart) ? EXERCISE_LIBRARY[bodyPart] : [];
+}
+
+export function getCustomExercises(custom: Record<string, string[]>, bodyPart: string): string[] {
+  return Object.prototype.hasOwnProperty.call(custom, bodyPart) ? custom[bodyPart] : [];
+}

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { customExerciseRepository } from '../data/repositories';
-import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
+import { getCustomExercises, getPresetExercises } from '../data/exerciseLibrary';
 
 interface ExerciseLibraryState {
   custom: Record<string, string[]>;
@@ -34,13 +34,17 @@ export const useExerciseLibraryStore = create<ExerciseLibraryState>((set, get) =
     const normalized = normalizeName(name);
     if (!normalized) return;
 
-    const preset = EXERCISE_LIBRARY[bodyPart] ?? [];
-    const currentCustom = get().custom[bodyPart] ?? [];
+    const preset = getPresetExercises(bodyPart);
+    const currentCustom = getCustomExercises(get().custom, bodyPart);
 
     if (nameExists(preset, currentCustom, normalized)) return;
 
     const nextCustom = { ...get().custom, [bodyPart]: [...currentCustom, normalized] };
     set({ custom: nextCustom });
-    customExerciseRepository.saveAll(nextCustom);
+    // Fire-and-forget write: a failed save must not become an unhandled
+    // rejection (the in-memory update above is already visible to the UI).
+    customExerciseRepository.saveAll(nextCustom).catch((e) => {
+      console.warn('Could not persist custom exercises:', e);
+    });
   },
 }));

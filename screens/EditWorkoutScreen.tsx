@@ -19,7 +19,7 @@ import { DatePickerField } from '../components/DatePickerField';
 import { WorkoutDraftEditor } from '../components/workoutDraftEditor';
 import { BodyPartPickerModal } from '../components/BodyPartPickerModal';
 import { showToast } from '../components/Toast';
-import { EXERCISE_LIBRARY } from '../data/exerciseLibrary';
+import { getCustomExercises, getPresetExercises } from '../data/exerciseLibrary';
 import { sanitizeDecimalInput, sanitizeIntegerInput } from '../data/numberInput';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
 import { Ionicons } from '@expo/vector-icons';
@@ -110,7 +110,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
   const [date, setDate] = useState<string>(session?.date ?? todayISO());
 
   const allExercisesFor = useMemo(
-    () => (part: string) => [...(EXERCISE_LIBRARY[part] ?? []), ...(customExercises[part] ?? [])],
+    () => (part: string) => [...getPresetExercises(part), ...getCustomExercises(customExercises, part)],
     [customExercises],
   );
 
@@ -201,7 +201,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
       }),
     );
     // If this is a custom exercise, save it to the library
-    if (!EXERCISE_LIBRARY[bpName]?.includes(trimmed)) {
+    if (!getPresetExercises(bpName).includes(trimmed)) {
       addCustomExercise(bpName, trimmed);
     }
   };
@@ -345,7 +345,7 @@ export function EditWorkoutScreen({ navigation, route }: any) {
     });
     setExName('');
     // If this is a custom exercise (not in presets), save it to the library
-    if (bodyPart && !EXERCISE_LIBRARY[bodyPart]?.includes(trimmed)) {
+    if (bodyPart && !getPresetExercises(bodyPart).includes(trimmed)) {
       addCustomExercise(bodyPart, trimmed);
     }
   };
