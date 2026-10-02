@@ -425,11 +425,14 @@ export function computeStrengthSeries(sessions: WorkoutSession[]): StrengthPoint
  * with neither a workout nor a rest mark breaks it.
  *
  * Rules:
+ *  - today is still "open" until it ends: if today has neither a workout nor
+ *    a rest mark, the walk starts at yesterday, so an untrained morning does
+ *    not reset a streak that is still alive.
  *  - rest marks only count up to today; future rest days don't extend a live
  *    streak (they haven't "happened" yet).
- *  - if the latest streak-ending event (workout or rest mark) is in the past,
- *    a streak survives only if today itself is a rest day (rest keeps a stale
- *    streak alive but does not extend it); otherwise it is broken.
+ *  - a streak survives a day with neither event only when that day is the
+ *    open "today"; any earlier gap in the past breaks it.
+ *  - `activeToday` is true only when a workout was logged today.
  */
 export function computeStreak(
   sessions: WorkoutSession[],
@@ -452,7 +455,13 @@ export function computeStreak(
   const isWorkout = (d: string) => workoutDays.has(d);
   const isRest = (d: string) => restDays.has(d);
 
-  // Walk backwards from today.
+  // Today is still open: with neither a workout nor a rest mark yet, start the
+  // backwards walk at yesterday so the streak isn't reset before the day ends.
+  if (!isWorkout(today) && !isRest(today)) {
+    cursor = shiftISODate(today, -1);
+  }
+
+  // Walk backwards from the cursor.
   while (true) {
     if (isWorkout(cursor)) {
       streak += 1;
@@ -474,9 +483,8 @@ export function computeStreak(
     break;
   }
 
-  // If the backwards walk stopped before today (today is neither a workout
-  // nor a rest mark), the streak belongs to the past and is broken: it does
-  // not carry into today uninvited. A marked rest day "today" is the one
-  // exception — it keeps the existing streak alive without extending it.
+  // The walk stops at the first day (before the open "today") with neither a
+  // workout nor a rest mark: a gap in the past breaks the streak, while an
+  // untrained "today" merely leaves it pending until the day ends.
   return { current: streak, activeToday };
 }

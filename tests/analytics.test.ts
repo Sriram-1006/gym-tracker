@@ -195,22 +195,24 @@ describe('computeStreak', () => {
     expect(computeStreak(sessions, today)).toEqual({ current: 0, activeToday: false });
   });
 
-  it('yesterday-only training does not carry into today uninvited', () => {
+  it('yesterday-only training stays visible while today is still open', () => {
+    // Trained Wed; it is now Thursday morning with nothing logged yet — the
+    // streak still shows 1 until Thursday ends without a workout or rest mark.
     const today = '2026-09-11';
     const sessions = [workout('2026-09-10', { A: [[1, 1]] })];
-    expect(computeStreak(sessions, today)).toEqual({ current: 0, activeToday: false });
+    expect(computeStreak(sessions, today)).toEqual({ current: 1, activeToday: false });
   });
 
-  it('an unmarked today after a rest-marked yesterday still breaks the chain', () => {
+  it('an unmarked today does not break a chain that reaches yesterday', () => {
     const today = '2026-09-11';
     const sessions = [
       workout('2026-09-08', { A: [[1, 1]] }),
       restDay('2026-09-09'),
       restDay('2026-09-10'),
     ];
-    // Rest marks bridge 09-08 → 09-10, but today (09-11) is neither workout
-    // nor rest, so nothing anchors the streak to the present.
-    expect(computeStreak(sessions, today)).toEqual({ current: 0, activeToday: false });
+    // Rest marks bridge 09-08 → 09-10 and today (09-11) is still open, so the
+    // streak carries into today: 1 workout day counted.
+    expect(computeStreak(sessions, today)).toEqual({ current: 1, activeToday: false });
   });
 
   it('multiple consecutive rest marks bridge workouts across a long pause', () => {
@@ -247,5 +249,34 @@ describe('computeStreak', () => {
 
   it('returns zero for no sessions at all', () => {
     expect(computeStreak([], '2026-09-11')).toEqual({ current: 0, activeToday: false });
+  });
+
+  it('keeps the streak alive while today is still open', () => {
+    const sessions = [
+      workout('2026-09-28', { A: [[1, 1]] }),
+      workout('2026-09-29', { A: [[1, 1]] }),
+      workout('2026-09-30', { A: [[1, 1]] }),
+    ];
+    expect(computeStreak(sessions, '2026-10-01')).toEqual({ current: 3, activeToday: false });
+  });
+
+  it('breaks the streak when a whole day was missed', () => {
+    // 09-30 has neither a workout nor a rest mark → the chain stops there.
+    const sessions = [workout('2026-09-28', { A: [[1, 1]] }), workout('2026-09-29', { A: [[1, 1]] })];
+    expect(computeStreak(sessions, '2026-10-01').current).toBe(0);
+  });
+
+  it('rest marks stay neutral across the open-today case', () => {
+    const sessions = [
+      workout('2026-09-28', { A: [[1, 1]] }),
+      workout('2026-09-29', { A: [[1, 1]] }),
+      restDay('2026-09-30'), // 09-30 = rest
+    ];
+    expect(computeStreak(sessions, '2026-10-01').current).toBe(2);
+  });
+
+  it('training today extends it and sets activeToday', () => {
+    const sessions = [workout('2026-09-30', { A: [[1, 1]] }), workout('2026-10-01', { A: [[1, 1]] })];
+    expect(computeStreak(sessions, '2026-10-01')).toEqual({ current: 2, activeToday: true });
   });
 });

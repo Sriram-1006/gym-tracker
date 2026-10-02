@@ -81,6 +81,7 @@ The streak is the number of **consecutive days you trained**, with these rules:
 
 - A day you **mark as a rest day** is **neutral**: it keeps an ongoing streak alive but does not extend it.
 - Only a day with **no workout and no rest mark** breaks the streak.
+- **Today doesn't break the streak until the day has ended**: if you haven't trained yet today, the streak still shows yesterday's count until the day closes without a workout or rest mark.
 - A day you already trained can't be marked as rest; marking an already-marked day is rejected.
 - In-progress workouts do **not** count toward the streak until finished.
 
@@ -298,6 +299,8 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 ## Changelog
 
 ### Unreleased — Export / Import UX refinement
+
+- **Streak.** A morning with nothing logged yet no longer resets the streak: today is treated as still open, so the count from the previous days stays visible until the day ends without a workout or rest mark.
 
 - **Export.** The row now shows “Exporting backup…” only while the file is generated; the loading state ends the moment the OS takes the file (share sheet open / download started) and the row returns to normal when the flow ends. Cancelling or closing the share sheet is no longer reported as anything — an error is shown only when generation or sharing actually fails.
 - **Import.** The confirmation now shows what the backup contains (workouts, diet logs, custom exercises as label/value rows) plus the replacement warning; invalid files are uniformly reported as “Invalid Gym Tracker backup file.” without opening the dialog. Cancel writes nothing, confirm imports and hydrates, and success is reported only after the validated import lands.

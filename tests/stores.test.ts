@@ -139,12 +139,13 @@ describe('useWorkoutStore', () => {
     expect(computeStreak(useWorkoutStore.getState().sessions, today).current).toBe(2);
 
     // Delete today's session: the streak must be rebuilt from the remaining
-    // data (yesterday alone does not carry into today), not go 2 → 1.
+    // data (yesterday's workout stays visible while today is still open),
+    // not go 2 → 1.
     const todayId = useWorkoutStore.getState().sessions.find((s) => s.date === today)!.id;
     await useWorkoutStore.getState().deleteSession(todayId);
 
     expect(computeStreak(useWorkoutStore.getState().sessions, today)).toEqual({
-      current: 0,
+      current: 1,
       activeToday: false,
     });
   });
