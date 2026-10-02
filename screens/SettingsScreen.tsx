@@ -7,7 +7,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useThemeStore } from '../theme/themeStore';
 import { useWorkoutStore, useDietStore, useCurrentDraftStore } from '../stores/appStores';
 import { useExerciseLibraryStore } from '../stores/exerciseLibraryStore';
-import { exportAllData, importAllData, validateBackupPayload, type BackupPayload } from '../data/repositories';
+import { exportAllData, importAllData, todayISO, validateBackupPayload, type BackupPayload } from '../data/repositories';
 import { pickBackupText, saveBackupFile } from '../data/services/backupFile';
 import { Card, ConfirmDialog, SectionTitle } from '../components/ui';
 import { showToast } from '../components/Toast';
@@ -43,7 +43,9 @@ export function SettingsScreen({ navigation }: any) {
     try {
       const payload = await exportAllData();
       const json = JSON.stringify(payload, null, 2);
-      const dateStr = payload.exportedAt.split('T')[0] ?? 'backup';
+      // Local calendar date (exportedAt is UTC, which is a day off after
+      // midnight in timezones east of UTC).
+      const dateStr = todayISO();
       const filename = `gym-tracker-backup-${dateStr}.json`;
       // As soon as the OS has the file (share sheet open / download started)
       // the loading state ends; cancelling the sheet is not an error — the

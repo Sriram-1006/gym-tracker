@@ -33,6 +33,7 @@ import { renderThemed, fakeNavigation } from '../helpers/render';
 import { SettingsScreen } from '../../screens/SettingsScreen';
 import { saveBackupFile, pickBackupText } from '../../data/services/backupFile';
 import { showToast } from '../../components/Toast';
+import { todayISO } from '../../data/repositories';
 import { useWorkoutStore, useDietStore } from '../../stores/appStores';
 import { useExerciseLibraryStore } from '../../stores/exerciseLibraryStore';
 import { useThemeStore } from '../../theme/themeStore';
@@ -121,6 +122,26 @@ describe('export flow', () => {
     const [json, filename] = vi.mocked(saveBackupFile).mock.calls[0];
     expect(filename).toMatch(/^gym-tracker-backup-\d{4}-\d{2}-\d{2}\.json$/);
     expect(JSON.parse(json).exportVersion).toBe(1);
+  });
+
+  it.each([
+    ['00:30 local (timezone east of UTC)', new Date(2026, 9, 2, 0, 30, 0)],
+    ['23:30 local (timezone west of UTC)', new Date(2026, 9, 2, 23, 30, 0)],
+  ])('names the file with the local date at %s', async (_label, probe) => {
+    // A UTC-derived date is one day off from the local date at these times,
+    // which is exactly when the old `exportedAt.split('T')[0]` naming failed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(probe);
+    try {
+      setup();
+      fireEvent.click(screen.getByText('Export Data'));
+
+      await waitFor(() => expect(saveBackupFile).toHaveBeenCalledTimes(1));
+      const [, filename] = vi.mocked(saveBackupFile).mock.calls[0];
+      expect(filename).toBe(`gym-tracker-backup-${todayISO()}.json`);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows an exporting state while the backup file is being generated', async () => {

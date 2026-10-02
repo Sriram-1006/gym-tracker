@@ -161,7 +161,7 @@ DATA & BACKUP
 └──────────────────────────────────────────────┘
 ```
 
-- **Export Data** writes a JSON backup of all workouts, diet logs, custom exercises and your theme preference, named `gym-tracker-backup-YYYY-MM-DD.json`.
+- **Export Data** writes a JSON backup of all workouts, diet logs, custom exercises and your theme preference, named `gym-tracker-backup-YYYY-MM-DD.json` with the **local** date (a UTC date would be a day off after midnight).
   - While the file is generated the row shows a spinner + **“Exporting backup…”**.
   - The spinner disappears the moment the **system share sheet** opens (the row returns to its normal text, then to normal — enabled — once the flow ends). The app never picks a destination: Drive, Files, Downloads, WhatsApp, mail, … are all offered by the OS.
   - Closing or cancelling the share sheet is **not** an error — nothing is reported. Only a real generation/sharing failure shows “Couldn't export your backup. Please try again.”, and success is never claimed otherwise.
@@ -300,10 +300,10 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 
 ### Unreleased — Export / Import UX refinement
 
+- **Backup filename.** Exports are named after the **local** date (`gym-tracker-backup-2026-10-02.json`), not the UTC date carried inside the payload — previously a 02:00 export in a UTC+ timezone produced yesterday's filename.
 - **Diet logging.** Two quick taps on **Add** log once (the input closes before the write), overlapping `addToLog` calls accumulate instead of overwriting each other, and gram totals are rounded to one decimal — `10.1 + 20.2` shows `30.3g`, never `30.299999999999997g`. The macro row label also reads `140g` instead of `140G`.
 - **Numeric input.** Weight/reps and diet fields strip minus signs, letters and extra decimal separators while typing (`1,5` still reads as `1.5`), negative/non-finite numbers are rejected at parse time, and reps are floored to whole numbers when a set is committed — so the app can no longer store data its own backup validator refuses.
 - **Streak.** A morning with nothing logged yet no longer resets the streak: today is treated as still open, so the count from the previous days stays visible until the day ends without a workout or rest mark.
-
 - **Export.** The row now shows “Exporting backup…” only while the file is generated; the loading state ends the moment the OS takes the file (share sheet open / download started) and the row returns to normal when the flow ends. Cancelling or closing the share sheet is no longer reported as anything — an error is shown only when generation or sharing actually fails.
 - **Import.** The confirmation now shows what the backup contains (workouts, diet logs, custom exercises as label/value rows) plus the replacement warning; invalid files are uniformly reported as “Invalid Gym Tracker backup file.” without opening the dialog. Cancel writes nothing, confirm imports and hydrates, and success is reported only after the validated import lands.
 - **Settings UI.** Data section is two simple cards (Export Data / Import Data) with descriptions and a chevron, using the existing theme; the OS still handles destination/source selection (share sheet, file picker).
