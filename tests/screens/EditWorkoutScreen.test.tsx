@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const { storage } = vi.hoisted(() => ({ storage: new Map<string, string>() }));
 
@@ -12,11 +13,18 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 
+// Toast is a side effect, not state: spy on it so tests can assert how often
+// it fires (StrictMode re-runs state updaters, so an updater must stay pure).
+vi.mock('../../components/Toast', () => ({ showToast: vi.fn() }));
+
 import { renderThemed, fakeNavigation } from '../helpers/render';
 import { EditWorkoutScreen } from '../../screens/EditWorkoutScreen';
+import { showToast } from '../../components/Toast';
 import { useWorkoutStore } from '../../stores/appStores';
 import { useExerciseLibraryStore } from '../../stores/exerciseLibraryStore';
 import { computeSessionStrength } from '../../data/repositories';
+import { ThemeContext } from '../../theme/ThemeContext';
+import { getTheme } from '../../theme/theme';
 import type { WorkoutSession } from '../../data/models';
 
 const SESSION: WorkoutSession = {
@@ -32,6 +40,7 @@ const SESSION: WorkoutSession = {
 
 beforeEach(() => {
   storage.clear();
+  vi.mocked(showToast).mockClear();
   useWorkoutStore.setState({ sessions: [{ ...SESSION, bodyParts: SESSION.bodyParts.map((b) => ({ ...b, exercises: b.exercises.map((e) => ({ ...e, sets: e.sets.map((s) => ({ ...s })) })) })) }], hydrated: true });
   useExerciseLibraryStore.setState({ custom: {}, hydrated: false });
 });
@@ -39,6 +48,19 @@ beforeEach(() => {
 function setup() {
   const navigation = fakeNavigation();
   renderThemed(<EditWorkoutScreen navigation={navigation} route={{ params: { sessionId: 'w_1' } }} />);
+  return { navigation };
+}
+
+/** Same screen wrapped in StrictMode, which re-runs state updater functions. */
+function setupStrict() {
+  const navigation = fakeNavigation();
+  render(
+    <StrictMode>
+      <ThemeContext.Provider value={getTheme('light')}>
+        <EditWorkoutScreen navigation={navigation} route={{ params: { sessionId: 'w_1' } }} />
+      </ThemeContext.Provider>
+    </StrictMode>,
+  );
   return { navigation };
 }
 
@@ -206,5 +228,51 @@ describe('EditWorkoutScreen', () => {
     );
     // The untouched body part is still there.
     expect(currentSession().bodyParts[1].exercises[0].sets).toEqual([{ weight: 20, reps: 12 }]);
+  });
+
+  // Toasts are side effects: firing them from inside a state updater means
+  // React's StrictMode re-run of that updater shows the message twice.
+  // (Test B below is the red test; this one pins the behaviour itself.)
+  it('toasts once when the same exercise is added twice from the active entry', () => {
+    setup();
+
+    fireEvent.click(screen.getByText('Add body part'));
+    fireEvent.click(screen.getByText('Legs'));
+    fireEvent.click(screen.getByText('Add'));
+
+    const typeName = (name: string) => {
+      fireEvent.click(screen.getByText('Add exercise (pick or type free text)…'));
+      fireEvent.change(screen.getByPlaceholderText('Custom exercise name…'), { target: { value: name } });
+      fireEvent.click(screen.getByText('Use this name'));
+    };
+
+    typeName('Zzyzx Curl');
+    fireEvent.click(screen.getByText('Add exercise'));
+    expect(showToast).not.toHaveBeenCalled();
+
+    typeName('Zzyzx Curl');
+    fireEvent.click(screen.getByText('Add exercise'));
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(
+      'Zzyzx Curl is already in this workout — added another set to it.',
+    );
+  });
+
+  it('toasts once when picking an exercise that already exists in the body part', () => {
+    setupStrict();
+
+    expandBodyPart('Chest');
+    fireEvent.click(screen.getByText('Add exercise'));
+
+    // The exercise name is visible in the expanded card too; the picker modal
+    // renders later in the tree, so its entry is the last match.
+    const matches = screen.getAllByText('Bench Press');
+    fireEvent.click(matches[matches.length - 1]);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(
+      'Bench Press is already in this workout — added another set to it.',
+    );
   });
 });

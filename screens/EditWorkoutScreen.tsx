@@ -181,6 +181,16 @@ export function EditWorkoutScreen({ navigation, route }: any) {
   const addExerciseToDraftBodyPart = (bpName: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    // Decide (and toast) before the update: state updaters must stay pure —
+    // React may run them more than once (StrictMode does), and a side effect
+    // inside one would fire every time it runs.
+    const target = draft.find((bp) => bp.bodyPart === bpName);
+    const isDuplicate =
+      target !== undefined &&
+      target.exercises.some((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
+    if (isDuplicate) {
+      showToast(`${trimmed} is already in this workout — added another set to it.`);
+    }
     setDraft((d) =>
       d.map((bp) => {
         if (bp.bodyPart !== bpName) return bp;
@@ -193,7 +203,6 @@ export function EditWorkoutScreen({ navigation, route }: any) {
             ...updatedExercises[existingIdx],
             sets: [...updatedExercises[existingIdx].sets, { weight: '', reps: '' }],
           };
-          showToast(`${trimmed} is already in this workout — added another set to it.`);
           return { ...bp, exercises: updatedExercises };
         }
         // No duplicate: add as new exercise
@@ -327,6 +336,13 @@ export function EditWorkoutScreen({ navigation, route }: any) {
   const addExercise = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    // Toast outside the updater (updaters must stay pure — see
+    // addExerciseToDraftBodyPart); duplicate detection uses the render copy,
+    // which always reflects the latest committed state for a click handler.
+    const isDuplicate = exercises.some((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
+    if (isDuplicate) {
+      showToast(`${trimmed} is already in this workout — added another set to it.`);
+    }
     setExercises((xs) => {
       // Check if exercise with same name (case-insensitive) already exists
       const existingIdx = xs.findIndex((ex) => ex.name.toLowerCase() === trimmed.toLowerCase());
@@ -337,7 +353,6 @@ export function EditWorkoutScreen({ navigation, route }: any) {
           ...updated[existingIdx],
           sets: [...updated[existingIdx].sets, { weight: '', reps: '' }],
         };
-        showToast(`${trimmed} is already in this workout — added another set to it.`);
         return updated;
       }
       // No duplicate: add as new exercise
