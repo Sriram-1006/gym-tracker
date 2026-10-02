@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 
-const { storage } = vi.hoisted(() => ({ storage: new Map<string, string>() }));
+const { storage, currentDay } = vi.hoisted(() => ({
+  storage: new Map<string, string>(),
+  currentDay: { value: '2026-09-11' },
+}));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
@@ -11,6 +14,16 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
     removeItem: async (key: string) => void storage.delete(key),
   },
 }));
+
+// Controllable clock: `todayISO()` returns `currentDay.value` while still
+// supporting explicit Date arguments (used by shiftISODate).
+vi.mock('../../data/dateUtils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../data/dateUtils')>();
+  return {
+    ...actual,
+    todayISO: (d?: Date) => (d ? actual.todayISO(d) : currentDay.value),
+  };
+});
 
 // The strength chart pulls in Skia/Victory, which are native-only.
 vi.mock('victory-native', () => ({
@@ -49,6 +62,7 @@ const SESSIONS: WorkoutSession[] = [
 
 beforeEach(async () => {
   storage.clear();
+  currentDay.value = '2026-09-11';
   await useCurrentDraftStore.getState().clearDraft();
   useCurrentDraftStore.setState({ draft: null, hydrated: false });
   useWorkoutStore.setState({ sessions: SESSIONS, hydrated: true });
@@ -135,5 +149,51 @@ describe('WorkoutHomeScreen', () => {
     setup();
     // Only the two completed sessions have "View workout" rows.
     expect(screen.getAllByLabelText(/^View workout from /)).toHaveLength(2);
+  });
+
+  it('re-reads "today" while the screen stays mounted past midnight', () => {
+    // Trained 10 and 11 Sep; it is now 11 Sep → streak 2 and "trained today".
+    useWorkoutStore.setState({
+      sessions: [
+        {
+          id: 'w_11',
+          date: '2026-09-11',
+          restDay: false,
+          createdAt: 2,
+          bodyParts: [
+            { bodyPart: 'Chest', exercises: [{ name: 'Bench Press', sets: [{ weight: 60, reps: 8 }] }] },
+          ],
+        },
+        {
+          id: 'w_10',
+          date: '2026-09-10',
+          restDay: false,
+          createdAt: 1,
+          bodyParts: [
+            { bodyPart: 'Back', exercises: [{ name: 'Deadlift', sets: [{ weight: 100, reps: 5 }] }] },
+          ],
+        },
+      ],
+      hydrated: true,
+    });
+
+    vi.useFakeTimers();
+    try {
+      setup();
+      expect(screen.getByText('2 days')).toBeTruthy();
+      expect(screen.getByText('Trained today — keep it going!')).toBeTruthy();
+
+      // Two days pass while Home stays on screen: the streak must be
+      // recomputed against the new "today" instead of staying frozen.
+      currentDay.value = '2026-09-13';
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(screen.getByText('0 days')).toBeTruthy();
+      expect(screen.getByText('Rest days don’t break your streak.')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

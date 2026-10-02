@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { AppState, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -47,7 +47,23 @@ export function WorkoutHomeScreen({ navigation }: any) {
     [currentDraft, hasCurrent],
   );
 
-  const today = todayISO();
+  // "Today" is state, not a value read once per render: nothing else would
+  // re-render this screen at midnight, so the streak and the rest-day button
+  // would keep showing yesterday. Refresh every 30 s and when the app comes
+  // back to the foreground (same pattern as App.tsx's diet rollover).
+  const [today, setToday] = useState(() => todayISO());
+
+  useEffect(() => {
+    const refresh = () => setToday(todayISO());
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    const id = setInterval(refresh, 30_000);
+    return () => {
+      sub.remove();
+      clearInterval(id);
+    };
+  }, []);
 
   const strengthSeries = useMemo(() => computeStrengthSeries(sessions), [sessions]);
   const streak = useMemo(() => computeStreak(sessions, today), [sessions, today]);
