@@ -29,6 +29,7 @@ function resetStores() {
   useDietStore.setState({
     targets: { protein: 0, carbs: 0, fats: 0, fiber: 0, isSetup: false },
     todayLog: { date: todayISO(), protein: 0, carbs: 0, fats: 0, fiber: 0 },
+    history: [],
     hydrated: false,
   });
   useExerciseLibraryStore.setState({ custom: {}, hydrated: false });
@@ -264,6 +265,9 @@ describe('useDietStore', () => {
       fiber: 0,
     };
     storage.set('diet.logs.v1', JSON.stringify([yesterday]));
+    // The store reads from its in-memory history once hydrated (the real app
+    // hydrates at startup), so seed first and then hydrate.
+    await useDietStore.getState().hydrate();
 
     await useDietStore.getState().addToLog({ protein: 30 });
     await useDietStore.getState().resetTodayLog();

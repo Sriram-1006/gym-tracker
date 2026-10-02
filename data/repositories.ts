@@ -36,7 +36,7 @@ export {
   isFutureISO,
   normalizeDateInput,
 } from './dateUtils';
-export { MACRO_KEYS, dietLogHasData, normalizeDietLogs, selectHistoricalLogs } from './dietUtils';
+export { MACRO_KEYS, dietLogHasData, normalizeDietLogs, roundGrams, formatGrams, selectHistoricalLogs } from './dietUtils';
 
 const WORKOUTS_KEY = 'workouts.sessions.v1';
 const DIET_TARGETS_KEY = 'diet.targets.v1';

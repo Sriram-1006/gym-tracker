@@ -24,7 +24,7 @@ vi.mock('../data/dateUtils', async (importOriginal) => {
 });
 
 import { useDietStore } from '../stores/appStores';
-import { selectHistoricalLogs, normalizeDietLogs } from '../data/repositories';
+import { formatGrams, roundGrams, selectHistoricalLogs, normalizeDietLogs } from '../data/repositories';
 import type { DietLog } from '../data/models';
 
 const LOGS_KEY = 'diet.logs.v1';
@@ -110,6 +110,42 @@ describe('diet midnight rollover', () => {
     const persisted = JSON.parse(storage.get(LOGS_KEY)!) as DietLog[];
     expect(persisted.find((l) => l.date === '2026-09-23')?.protein).toBe(50);
     expect(persisted.find((l) => l.date === '2026-09-24')?.protein).toBe(30);
+  });
+});
+
+describe('gram rounding helpers', () => {
+  it('roundGrams rounds to one decimal place', () => {
+    expect(roundGrams(30.299999999999997)).toBe(30.3);
+    expect(roundGrams(30)).toBe(30);
+  });
+
+  it('formatGrams renders a rounded value without float noise', () => {
+    expect(formatGrams(30)).toBe('30');
+    expect(formatGrams(30.299999999999997)).toBe('30.3');
+  });
+});
+
+describe('addToLog updates', () => {
+  it('accumulates concurrent calls instead of overwriting each other', async () => {
+    await useDietStore.getState().hydrate();
+
+    await Promise.all([
+      useDietStore.getState().addToLog({ protein: 30 }),
+      useDietStore.getState().addToLog({ protein: 30 }),
+    ]);
+
+    expect(useDietStore.getState().todayLog.protein).toBe(60);
+    const persisted = JSON.parse(storage.get(LOGS_KEY)!) as DietLog[];
+    expect(persisted.find((l) => l.date === '2026-09-23')?.protein).toBe(60);
+  });
+
+  it('rounds accumulated totals so 10.1 + 20.2 displays 30.3', async () => {
+    await useDietStore.getState().hydrate();
+
+    await useDietStore.getState().addToLog({ protein: 10.1 });
+    await useDietStore.getState().addToLog({ protein: 20.2 });
+
+    expect(useDietStore.getState().todayLog.protein).toBe(30.3);
   });
 });
 

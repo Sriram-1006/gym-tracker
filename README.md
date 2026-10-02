@@ -300,6 +300,7 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 
 ### Unreleased — Export / Import UX refinement
 
+- **Diet logging.** Two quick taps on **Add** log once (the input closes before the write), overlapping `addToLog` calls accumulate instead of overwriting each other, and gram totals are rounded to one decimal — `10.1 + 20.2` shows `30.3g`, never `30.299999999999997g`. The macro row label also reads `140g` instead of `140G`.
 - **Numeric input.** Weight/reps and diet fields strip minus signs, letters and extra decimal separators while typing (`1,5` still reads as `1.5`), negative/non-finite numbers are rejected at parse time, and reps are floored to whole numbers when a set is committed — so the app can no longer store data its own backup validator refuses.
 - **Streak.** A morning with nothing logged yet no longer resets the streak: today is treated as still open, so the count from the previous days stays visible until the day ends without a workout or rest mark.
 

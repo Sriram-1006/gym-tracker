@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../theme/ThemeContext';
 import { useDietStore, DEFAULT_TARGETS } from '../stores/appStores';
-import { formatDisplayDateShort, parseDraftNumber, selectHistoricalLogs } from '../data/repositories';
+import { formatDisplayDateShort, formatGrams, parseDraftNumber, selectHistoricalLogs } from '../data/repositories';
 import { sanitizeDecimalInput } from '../data/numberInput';
 import { Button, Card, EmptyState, ProgressBar, SectionTitle } from '../components/ui';
 import { MacroKey } from '../data/models';
@@ -86,16 +86,15 @@ export function DietScreen() {
   };
 
   const saveLog = async () => {
-    if (!logOpenFor) return;
+    const key = logOpenFor;
+    if (!key) return;
     const grams = parseDraftNumber(logValue);
-    if (grams <= 0) {
-      setLogOpenFor(null);
-      setLogValue('');
-      return;
-    }
-    await addToLog({ [logOpenFor]: grams });
+    // Close the input before the async write so a quick double-tap on Add
+    // cannot log the same amount twice.
     setLogOpenFor(null);
     setLogValue('');
+    if (grams <= 0) return;
+    await addToLog({ [key]: grams });
   };
 
   /* ------------------------------- setup form ---------------------------- */
@@ -154,7 +153,7 @@ export function DietScreen() {
               {m.label}
             </Text>
             <Text style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
-              {consumed}g / {target}G
+              {formatGrams(consumed)}g / {target}g
             </Text>
           </View>
 
@@ -335,7 +334,7 @@ export function DietScreen() {
                           {m.label}
                         </Text>
                         <Text style={{ color: colors.textMuted, fontSize: fontSize.caption }}>
-                          {consumed} / {target}g{target > 0 ? ` · ${pct}%` : ''}
+                          {formatGrams(consumed)} / {target}g{target > 0 ? ` · ${pct}%` : ''}
                         </Text>
                       </View>
                     );

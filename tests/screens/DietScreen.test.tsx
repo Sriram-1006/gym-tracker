@@ -74,8 +74,8 @@ describe('DietScreen — today’s intake', () => {
   it('renders consumed / target and the percentage', () => {
     useDietStore.setState({ todayLog: { date: todayISO(), protein: 70, carbs: 125, fats: 35, fiber: 15 } });
     setup();
-    expect(screen.getByText('70g / 140G')).toBeTruthy();
-    expect(screen.getByText('125g / 250G')).toBeTruthy();
+    expect(screen.getByText('70g / 140g')).toBeTruthy();
+    expect(screen.getByText('125g / 250g')).toBeTruthy();
     // Every macro is at exactly 50% of its target here.
     expect(screen.getAllByText('50%')).toHaveLength(4);
   });
@@ -87,7 +87,38 @@ describe('DietScreen — today’s intake', () => {
     fireEvent.click(screen.getByText('Add'));
 
     await waitFor(() => expect(useDietStore.getState().todayLog.protein).toBe(80));
-    expect(screen.getByText('80g / 140G')).toBeTruthy();
+    expect(screen.getByText('80g / 140g')).toBeTruthy();
+  });
+
+  it('logs once even when Add is tapped twice quickly', async () => {
+    setup();
+    fireEvent.click(screen.getByLabelText('Log Protein intake'));
+    fireEvent.change(screen.getByPlaceholderText('Grams of protein…'), { target: { value: '40' } });
+    const addButton = screen.getByText('Add');
+    fireEvent.click(addButton);
+    // Second tap before the async write finishes.
+    fireEvent.click(addButton);
+
+    // Let every pending write settle, then check nothing was logged twice.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(useDietStore.getState().todayLog.protein).toBe(40);
+    const persisted = JSON.parse(storage.get('diet.logs.v1')!) as DietLog[];
+    expect(persisted.find((l) => l.date === todayISO())?.protein).toBe(40);
+  });
+
+  it('shows float-noise-free totals after two decimal logs', async () => {
+    setup();
+    fireEvent.click(screen.getByLabelText('Log Protein intake'));
+    fireEvent.change(screen.getByPlaceholderText('Grams of protein…'), { target: { value: '10.1' } });
+    fireEvent.click(screen.getByText('Add'));
+    await waitFor(() => expect(useDietStore.getState().todayLog.protein).toBe(10.1));
+
+    fireEvent.click(screen.getByLabelText('Log Protein intake'));
+    fireEvent.change(screen.getByPlaceholderText('Grams of protein…'), { target: { value: '20.2' } });
+    fireEvent.click(screen.getByText('Add'));
+
+    await waitFor(() => expect(useDietStore.getState().todayLog.protein).toBe(30.3));
+    expect(screen.getByText('30.3g / 140g')).toBeTruthy();
   });
 
   it('resets today’s log', async () => {

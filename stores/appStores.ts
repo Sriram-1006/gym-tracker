@@ -8,6 +8,7 @@ import {
   hasMeaningfulDraftData,
   MACRO_KEYS,
   normalizeDietLogs,
+  roundGrams,
   selectHistoricalLogs,
   shiftISODate,
   todayISO,
@@ -334,6 +335,14 @@ export const useDietStore = create<DietState>((set, get) => ({
     return get().setupTargets(grams);
   },
 
+  /**
+   * Add intake to today's log.
+   *
+   * The in-memory `history` is the source of truth once hydrated (syncDay and
+   * an import both re-hydrate), so the new totals are computed and `set(...)`
+   * synchronously *before* any `await` — two overlapping calls therefore see
+   * each other's result instead of overwriting it with a stale read.
+   */
   addToLog: async (grams) => {
     // Defense in depth: only finite, positive amounts may reach the log —
     // Infinity would be stored as null by JSON.stringify, negatives would
@@ -345,26 +354,25 @@ export const useDietStore = create<DietState>((set, get) => ({
     }
 
     const today = todayISO();
-    const logs = await dietRepository.getLogs();
-    const existing = logs.find((l: DietLog) => l.date === today);
-    const next: DietLog = existing
-      ? {
-          ...existing,
-          protein: existing.protein + (clean.protein ?? 0),
-          carbs: existing.carbs + (clean.carbs ?? 0),
-          fats: existing.fats + (clean.fats ?? 0),
-          fiber: existing.fiber + (clean.fiber ?? 0),
-        }
-      : { ...emptyLog(today), ...clean };
-    const merged = normalizeDietLogs([next, ...logs.filter((l) => l.date !== today)]);
+    const history = get().history;
+    const existing = history.find((l: DietLog) => l.date === today) ?? emptyLog(today);
+    const next: DietLog = {
+      ...existing,
+      protein: roundGrams(existing.protein + (clean.protein ?? 0)),
+      carbs: roundGrams(existing.carbs + (clean.carbs ?? 0)),
+      fats: roundGrams(existing.fats + (clean.fats ?? 0)),
+      fiber: roundGrams(existing.fiber + (clean.fiber ?? 0)),
+    };
+    const merged = normalizeDietLogs([next, ...history.filter((l) => l.date !== today)]);
+    // Synchronous state commit first; only the write waits.
     set({ todayLog: { ...next }, history: merged });
     await dietRepository.saveLogs(merged);
   },
 
   resetTodayLog: async () => {
     const today = todayISO();
-    const logs = await dietRepository.getLogs();
-    const merged = normalizeDietLogs([...logs.filter((l) => l.date !== today), emptyLog(today)]);
+    const history = get().history;
+    const merged = normalizeDietLogs([...history.filter((l) => l.date !== today), emptyLog(today)]);
     set({ todayLog: emptyLog(today), history: merged });
     await dietRepository.saveLogs(merged);
   },

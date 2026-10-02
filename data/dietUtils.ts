@@ -4,6 +4,12 @@ import { todayISO } from './dateUtils';
 /** Canonical macro order shared by the store, screen and tests. */
 export const MACRO_KEYS = ['protein', 'carbs', 'fats', 'fiber'] as const;
 
+/** Round a gram total to one decimal so `10.1 + 20.2` shows 30.3, not 30.299999999999997. */
+export const roundGrams = (n: number): number => Math.round(n * 10) / 10;
+
+/** Display form of a gram total (one decimal, no float noise). */
+export const formatGrams = (n: number): string => String(roundGrams(n));
+
 /** True when a log has any non-zero intake. */
 export function dietLogHasData(log: DietLog): boolean {
   return log.protein > 0 || log.carbs > 0 || log.fats > 0 || log.fiber > 0;
