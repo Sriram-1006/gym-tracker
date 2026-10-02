@@ -11,7 +11,8 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.karthik1006.gymtracker"
     },
     "web": {
       "bundler": "metro",
@@ -22,6 +23,11 @@
       "@react-native-community/datetimepicker",
       "expo-sharing",
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "13d23228-4a0b-4db7-bf06-f585990eb2ad"
+      }
+    }
   }
 }

@@ -215,12 +215,44 @@ Your current app data will be replaced by this backup.
 
 ---
 
+## Building & releasing (EAS)
+
+Day-to-day development runs in [Expo Go](https://expo.dev/go); installable/store builds go through [EAS Build](https://docs.expo.dev/build/introduction/).
+
+```bash
+npm i -g eas-cli
+eas login                                     # once per machine
+
+eas build --platform android --profile preview     # internal-test APK you can sideload
+eas build --platform android --profile production  # Play Store build
+eas build --platform ios --profile production      # App Store build
+eas submit --platform android --profile production # upload the latest build to the store
+```
+
+The build profiles live in `eas.json` (committed to the repo):
+
+| Profile | What it produces |
+| --- | --- |
+| `development` | Dev-client build (`developmentClient: true`) with internal distribution, for running the app against your own dev server. |
+| `preview` | Internal-distribution build (APK / ad-hoc IPA) installable without an app store. |
+| `production` | Store build. `autoIncrement: true` bumps the version on every build, and `appVersionSource: "remote"` keeps the build-number bookkeeping on EAS rather than in `app.json`. |
+
+`app.json` holds the Expo config (app name, version `1.1.0`, Android package `com.karthik1006.gymtracker`, plugins) and the EAS project id under `expo.extra.eas.projectId`. The required EAS CLI version is pinned by `cli.version` in `eas.json`.
+
+Keystores, credentials, `google-services.json` / `GoogleService-Info.plist`, generated `android/` and `ios/` projects and build artifacts are all ignored by `.gitignore` — nothing secret or machine-generated is committed.
+
+CI intentionally runs **no** native builds (see *Continuous integration*).
+
+---
+
 ## For developers
 
 ### Project structure
 
 ```
 ├── App.tsx                  # Root: hydration gate + ThemeContext provider + diet day rollover
+├── app.json                 # Expo config: name, version, Android package, plugins, EAS project id
+├── eas.json                 # EAS Build profiles (development / preview / production)
 ├── navigation/index.tsx     # Bottom tabs (Workout | Diet) + native stack for detail screens
 ├── screens/                 # One file per screen (UI only)
 ├── components/              # Shared UI kit (ui.tsx), DatePickerField, BodyPartPickerModal,
@@ -298,8 +330,9 @@ React Native (Expo SDK 57) · TypeScript · React Navigation (bottom tabs + nati
 
 ## Changelog
 
-### Unreleased — Export / Import UX refinement
+### Unreleased — Export / Import UX refinement, EAS build setup
 
+- **Builds.** Added `eas.json` with **development / preview / production** profiles (CLI `>= 24.8.0`, remote version source, auto-incrementing production builds) and registered the EAS project id in `app.json` (`expo.extra.eas.projectId`); the README documents the build/submit flow, and `.gitignore` now also excludes generated `android/`/`ios/` projects, release artifacts (`.apk`/`.aab`/`.ipa`), EAS caches (`.eas/`) and native signing credentials.
 - **Custom exercise library.** Body part names that collide with `Object` properties (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) no longer crash the picker or the "save as custom exercise" path — all lookups now read own properties only, and a failed library write is logged instead of surfacing as an unhandled rejection.
 - **Backup filename.** Exports are named after the **local** date (`gym-tracker-backup-2026-10-02.json`), not the UTC date carried inside the payload — previously a 02:00 export in a UTC+ timezone produced yesterday's filename.
 - **Diet logging.** Two quick taps on **Add** log once (the input closes before the write), overlapping `addToLog` calls accumulate instead of overwriting each other, and gram totals are rounded to one decimal — `10.1 + 20.2` shows `30.3g`, never `30.299999999999997g`. The macro row label also reads `140g` instead of `140G`.
